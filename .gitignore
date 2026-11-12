@@ -1,0 +1,37 @@
+# --- Secrets and per-machine configuration ---------------------------------
+# The examples stay tracked; real environment files never do.
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# --- Django runtime data ---------------------------------------------------
+# The database, the encrypted originals and the collected admin static files
+# are all deployment state, not source. See deploy/deploy.ps1 for backups.
+*.sqlite3
+private_storage/
+staticfiles/
+
+# --- Node / Vite -----------------------------------------------------------
+node_modules/
+dist/
+.vite/
+
+# --- Local deployment binaries ---------------------------------------------
+# caddy.exe / nssm.exe fetched by hand for install-service.ps1; re-downloadable.
+tools/
+
+# --- Editors / OS ----------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+

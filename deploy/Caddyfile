@@ -1,0 +1,38 @@
+# SecureFile — Caddy reverse proxy + SPA host (Windows VPS).
+#
+# Caddy terminates TLS (automatic Let's Encrypt for the DuckDNS host) and
+# forwards the Django API to Waitress on 127.0.0.1:8000. Because the SPA and the
+# API share one origin, a recipient link is simply
+#   https://serviceindex.duckdns.org/<token>
+# with no /view/ prefix, and the HttpOnly `sf_viewer` cookie works without any
+# cross-origin configuration.
+#
+# Environment overrides (set when the service is installed, see install-service.ps1):
+#   SECUREFILE_DOMAIN  public hostname, default serviceindex.duckdns.org
+#   SECUREFILE_ROOT    repository root, default C:/securefile
+
+{$SECUREFILE_DOMAIN:serviceindex.duckdns.org} {
+	encode zstd gzip
+
+	# Django REST API. This also covers /api/health/ and the public recipient
+	# viewer at /api/public/, including the signed watermarked-rendition URLs.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Admin/DRF static files collected by `manage.py collectstatic` and served
+	# by Whitenoise inside the Django process.
+	handle /static/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Built React SPA. Anything that is not /api or /static resolves to the
+	# single-page app, and an unknown path falls back to index.html so
+	# client-side routes (/login, /files, and the root-level /<token> viewer)
+	# work on a hard refresh.
+	handle {
+		root * {$SECUREFILE_ROOT:C:/securefile}/frontend/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

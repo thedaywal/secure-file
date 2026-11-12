@@ -1,0 +1,45 @@
+[Unit]
+Description=SecureFile API (gunicorn + Django WSGI)
+Documentation=https://docs.djangoproject.com/en/5.2/howto/deployment/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# --- Identity and layout ----------------------------------------------------
+# Copy to /etc/systemd/system/securefile-api.service and adjust the two paths
+# below if you did not deploy to /opt/securefile.
+User=securefile
+Group=securefile
+WorkingDirectory=/opt/securefile/backend
+
+# The same .env Django reads itself, so `manage.py` and gunicorn always agree.
+# systemd values win, because settings.py loads the file with setdefault().
+EnvironmentFile=/opt/securefile/backend/.env
+
+# --- Process ----------------------------------------------------------------
+# Binds loopback only: nginx is the sole public entry point.
+# 3 workers is right for SQLite; raise it if you move to PostgreSQL.
+# The 120s timeout covers watermarking a 25 MB image.
+ExecStart=/opt/securefile/backend/.venv/bin/gunicorn config.wsgi:application \
+    --bind 127.0.0.1:8001 \
+    --workers 3 \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    --no-control-socket \
+    --access-logfile - \
+    --error-logfile -
+
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+
+# --- Hardening --------------------------------------------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
