@@ -1,5 +1,4 @@
-import { request, withMockFallback } from '@/services/api'
-import * as mock from '@/services/mock'
+import { loadMock, request, withMockFallback } from '@/services/api'
 import type { Paginated, PaginationParams, WatermarkLookupResult, WatermarkRecord } from '@/types'
 
 export interface WatermarkFilters extends PaginationParams {
@@ -28,14 +27,14 @@ export const watermarkService = {
             recipient_username: filters.recipientUsername,
           },
         }),
-      () => mock.mockListWatermarks(filters) as Promise<Paginated<WatermarkRecord>>,
+      async () => (await loadMock()).mockListWatermarks(filters) as Promise<Paginated<WatermarkRecord>>,
     )
   },
 
   get(id: string): Promise<WatermarkRecord> {
     return withMockFallback(
       () => request<WatermarkRecord>({ url: `/watermarks/${id}/`, method: 'GET' }),
-      () => mock.mockGetWatermark(id) as Promise<WatermarkRecord>,
+      async () => (await loadMock()).mockGetWatermark(id) as Promise<WatermarkRecord>,
     )
   },
 
@@ -43,7 +42,7 @@ export const watermarkService = {
   verify(id: string): Promise<WatermarkRecord> {
     return withMockFallback(
       () => request<WatermarkRecord>({ url: `/watermarks/${id}/verify/`, method: 'POST' }),
-      () => mock.mockVerifyWatermark(id) as Promise<WatermarkRecord>,
+      async () => (await loadMock()).mockVerifyWatermark(id) as Promise<WatermarkRecord>,
     )
   },
 
@@ -60,7 +59,7 @@ export const watermarkService = {
           method: 'POST',
           data: { output_hash: input.outputHash, access_id: input.accessId },
         }),
-      () => mock.mockLookupWatermark(input),
+      async () => (await loadMock()).mockLookupWatermark(input),
     )
   },
 }

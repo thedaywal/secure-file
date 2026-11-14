@@ -27,7 +27,9 @@ from accounts.serializers import (
     UpdateProfileSerializer,
     UserSerializer,
 )
-from core.utils import random_hex, random_token, sha256_hex
+from core.utils import client_ip, random_hex, random_token, sha256_hex
+from monitoring.models import AccessEventType, is_blocked
+from monitoring.services import guard_repeated_failures, record_access
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,16 @@ class LoginView(APIView):
     authentication_classes: list = []
 
     def post(self, request):
+        address = client_ip(request)
+        if is_blocked(address):
+            return Response(
+                {
+                    'detail': 'Sign-in from this network has been blocked.',
+                    'code': 'ip_blocked',
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data['email']
@@ -62,6 +74,16 @@ class LoginView(APIView):
 
         user = authenticate(request, email=email, password=password)
         if user is None:
+            # Record the failure in the same audit trail as recipient access, so a
+            # burst from one address can be counted and the address blocked. This
+            # is the only protection on a single-administrator system besides the
+            # password itself.
+            record_access(AccessEventType.ADMIN_LOGIN_FAILED, request=request)
+            guard_repeated_failures(
+                address,
+                reason='Repeated failed administrator sign-ins',
+                request=request,
+            )
             return Response(
                 {
                     'detail': 'Email or password is incorrect.',

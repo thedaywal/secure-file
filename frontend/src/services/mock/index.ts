@@ -18,14 +18,16 @@ import {
   MOCK_SHARES,
   MOCK_USER,
   MOCK_WATERMARKS,
-  watermarkStampOf,
 } from '@/services/mock/data'
 import { buildRenditionPreview } from '@/services/mock/previews'
 import type {
   AccessLog,
   AccessLogFilters,
+  Album,
+  AlbumUploadInput,
   AppNotification,
   AuthSession,
+  BlockedIP,
   DashboardSummary,
   Device,
   DeviceHistory,
@@ -51,16 +53,19 @@ const delay = (ms = 240) => new Promise<void>((resolve) => setTimeout(resolve, m
 
 /* Mutable in-memory copies so create/revoke/delete actions are reflected. */
 const files: SecureFile[] = [...MOCK_FILES]
+const albums: Album[] = []
 const shares: ShareLink[] = [...MOCK_SHARES]
 const recipients: Recipient[] = [...MOCK_RECIPIENTS]
 const accessLogs: AccessLog[] = [...MOCK_ACCESS_LOGS]
 const devices: Device[] = [...MOCK_DEVICES]
 const notifications: AppNotification[] = [...MOCK_NOTIFICATIONS]
+const blockedIPs: BlockedIP[] = []
 const watermarks: WatermarkRecord[] = [...MOCK_WATERMARKS]
 const policies = new Map<string, FilePolicy>()
 const viewerSessions = new Map<string, ViewerSession>()
 /** Tokens consumed by a successful authentication → their authorized session. */
 const consumedTokens = new Map<string, ViewerSession>()
+const mockLinkTargets = new Map<string, { files: SecureFile[]; album: Album | null }>()
 
 let notificationPreferences: NotificationPreference[] = []
 
@@ -208,6 +213,23 @@ export async function mockUploadFile(input: FileUploadInput): Promise<SecureFile
   return created
 }
 
+export async function mockUploadAlbum(input: AlbumUploadInput): Promise<Album> {
+  await delay(900)
+  const images: SecureFile[] = []
+  for (const file of input.files) {
+    images.push(await mockUploadFile({ file }))
+  }
+  const album: Album = {
+    id: `alb_${makeHex(8)}`,
+    name: input.name,
+    imageCount: images.length,
+    createdAt: new Date().toISOString(),
+    images,
+  }
+  albums.unshift(album)
+  return album
+}
+
 export async function mockUpdateFile(id: string, patch: Partial<SecureFile>): Promise<SecureFile> {
   await delay(220)
   const index = files.findIndex((item) => item.id === id)
@@ -317,6 +339,7 @@ export interface CreateShareRecipientInput {
 
 export interface CreateShareInput {
   fileId?: string
+  albumId?: string
   recipients: CreateShareRecipientInput[]
 }
 
@@ -324,7 +347,8 @@ export async function mockCreateShares(
   input: CreateShareInput,
 ): Promise<{ shares: ShareLink[]; recipients: Recipient[]; shareUrl: string }> {
   await delay(700)
-  const file = files.find((item) => item.id === input.fileId)
+  const album = albums.find((item) => item.id === input.albumId) ?? null
+  const file = album?.images[0] ?? files.find((item) => item.id === input.fileId)
   if (!file) throw new Error(`File ${input.fileId} not found`)
 
   const created: ShareLink[] = []
@@ -338,7 +362,9 @@ export async function mockCreateShares(
       username: entry.username,
       displayName: entry.displayName,
       fileId: file.id,
-      fileName: file.name,
+      fileName: album?.name ?? file.name,
+      albumId: album?.id,
+      imageCount: album?.imageCount ?? 1,
       permissions: entry.permissions,
       status: 'ACTIVE',
       createdAt: now,
@@ -347,13 +373,15 @@ export async function mockCreateShares(
     const share: ShareLink = {
       id: `shr_${makeHex(6)}_${index}`,
       fileId: file.id,
-      fileName: file.name,
+      fileName: album?.name ?? file.name,
+      albumId: album?.id,
+      imageCount: album?.imageCount ?? 1,
       fileKind: file.kind,
       recipientId: recipient.id,
       recipientUsername: recipient.username,
       permissions: entry.permissions,
       tokenPreview: `••••••${token.slice(-6)}`,
-      url: `${file.id}/${token}`,
+      url: token,
       state: 'ACTIVE',
       createdAt: now,
       expiresAt: entry.permissions.expiresAt ?? file.expiresAt ?? null,
@@ -368,25 +396,29 @@ export async function mockCreateShares(
     }
     created.push(share)
     createdRecipients.push(recipient)
+    mockLinkTargets.set(token, { files: album?.images ?? [file], album })
   })
 
   shares.unshift(...created)
   recipients.push(...createdRecipients)
 
-  const index = files.findIndex((item) => item.id === file.id)
-  if (index !== -1) {
-    files[index] = {
-      ...files[index],
-      protectionStatus: 'protected',
-      authorizedRecipients: files[index].authorizedRecipients + created.length,
-      activeShareLinks: files[index].activeShareLinks + created.length,
+  const protectedImages = album?.images ?? [file]
+  for (const protectedImage of protectedImages) {
+    const index = files.findIndex((item) => item.id === protectedImage.id)
+    if (index !== -1) {
+      files[index] = {
+        ...files[index],
+        protectionStatus: 'protected',
+        authorizedRecipients: files[index].authorizedRecipients + created.length,
+        activeShareLinks: files[index].activeShareLinks + created.length,
+      }
     }
   }
 
   return {
     shares: created,
     recipients: createdRecipients,
-    shareUrl: created[0]?.url ?? file.id,
+    shareUrl: created[0]?.url ?? '',
   }
 }
 
@@ -398,7 +430,10 @@ export async function mockReissueShare(id: string): Promise<ShareLink> {
   const token = makeHex(22)
   share.state = 'ACTIVE'
   share.tokenPreview = `••••••${token.slice(-6)}`
-  share.url = `${share.fileId}/${token}`
+  share.url = token
+  const album = albums.find((item) => item.id === share.albumId) ?? null
+  const file = album?.images[0] ?? files.find((item) => item.id === share.fileId)
+  if (file) mockLinkTargets.set(token, { files: album?.images ?? [file], album })
   share.createdAt = new Date().toISOString()
   share.consumedAt = null
   share.consumedIp = null
@@ -458,32 +493,93 @@ export async function mockUpdateSharePermissions(
  * ------------------------------------------------------------------ */
 export async function mockListAccessLogs(filters: AccessLogFilters = {}): Promise<Paginated<AccessLog>> {
   await delay()
-  const filtered = sortByDate(accessLogs, 'occurredAt').filter((log) => {
-    const matchesSearch = matches(
-      `${log.recipientUsername} ${log.fileName} ${log.ip} ${log.device}`,
-      filters.search,
-    )
-    const matchesResult =
-      !filters.result || filters.result === 'all' || log.result === filters.result
-    const matchesEvent =
-      !filters.eventType || filters.eventType === 'all' || log.eventType === filters.eventType
-    const matchesFile = !filters.fileId || log.fileId === filters.fileId
-    const matchesRecipient =
-      !filters.recipientUsername || log.recipientUsername === filters.recipientUsername
-    const matchesFrom = !filters.dateFrom || log.occurredAt >= filters.dateFrom
-    const matchesTo = !filters.dateTo || log.occurredAt <= filters.dateTo
-    return (
-      matchesSearch &&
-      matchesResult &&
-      matchesEvent &&
-      matchesFile &&
-      matchesRecipient &&
-      matchesFrom &&
-      matchesTo
-    )
-  })
+  const filtered = sortByDate(accessLogs, 'occurredAt').filter((log) =>
+    matchesAccessFilters(log, filters),
+  )
   return paginate(filtered, filters.page, filters.pageSize ?? 12)
 }
+
+/** Shared predicate so the bulk delete removes exactly what the list shows. */
+function matchesAccessFilters(log: AccessLog, filters: AccessLogFilters): boolean {
+  const matchesSearch = matches(
+    `${log.recipientUsername} ${log.fileName} ${log.ip} ${log.device}`,
+    filters.search,
+  )
+  const matchesResult = !filters.result || filters.result === 'all' || log.result === filters.result
+  const matchesEvent =
+    !filters.eventType || filters.eventType === 'all' || log.eventType === filters.eventType
+  const matchesFile = !filters.fileId || log.fileId === filters.fileId
+  const matchesRecipient =
+    !filters.recipientUsername || log.recipientUsername === filters.recipientUsername
+  const matchesFrom = !filters.dateFrom || log.occurredAt >= filters.dateFrom
+  const matchesTo = !filters.dateTo || log.occurredAt <= filters.dateTo
+  return (
+    matchesSearch &&
+    matchesResult &&
+    matchesEvent &&
+    matchesFile &&
+    matchesRecipient &&
+    matchesFrom &&
+    matchesTo
+  )
+}
+
+export async function mockClearAccessLogs(
+  filters: AccessLogFilters = {},
+): Promise<{ deleted: number }> {
+  await delay()
+  const kept = accessLogs.filter((log) => !matchesAccessFilters(log, filters))
+  const deleted = accessLogs.length - kept.length
+  accessLogs.splice(0, accessLogs.length, ...kept)
+  return { deleted }
+}
+
+export async function mockDeleteAccessLog(id: string): Promise<void> {
+  await delay(160)
+  const index = accessLogs.findIndex((log) => log.id === id)
+  if (index === -1) throw new Error(`Access log ${id} not found`)
+  accessLogs.splice(index, 1)
+}
+
+/* ------------------------------------------------------------------ *
+ * Blocked addresses
+ * ------------------------------------------------------------------ */
+export async function mockListBlockedIPs(search?: string): Promise<BlockedIP[]> {
+  await delay(180)
+  const filtered = blockedIPs.filter((item) =>
+    matches(`${item.address} ${item.reason ?? ''}`, search),
+  )
+  return sortByDate(filtered, 'blockedAt')
+}
+
+export async function mockBlockIP(input: { address: string; reason?: string }): Promise<BlockedIP> {
+  await delay(220)
+  const address = input.address.trim()
+  if (blockedIPs.some((item) => item.address === address)) {
+    throw {
+      status: 409,
+      code: 'already_blocked',
+      message: 'That address is already blocked.',
+    }
+  }
+  const record: BlockedIP = {
+    id: `blk_${makeHex(8)}`,
+    address,
+    reason: input.reason?.trim() || '',
+    source: 'manual',
+    blockedAt: new Date().toISOString(),
+  }
+  blockedIPs.unshift(record)
+  return record
+}
+
+export async function mockUnblockIP(id: string): Promise<void> {
+  await delay(160)
+  const index = blockedIPs.findIndex((item) => item.id === id)
+  if (index === -1) throw new Error(`Blocked address ${id} not found`)
+  blockedIPs.splice(index, 1)
+}
+
 
 export async function mockGetDashboard(): Promise<DashboardSummary> {
   await delay(320)
@@ -530,6 +626,13 @@ export async function mockSetDeviceTrust(id: string, trustStatus: Device['trustS
   return device
 }
 
+export async function mockDeleteDevice(id: string): Promise<void> {
+  await delay(180)
+  const index = devices.findIndex((item) => item.id === id)
+  if (index === -1) throw new Error(`Device ${id} not found`)
+  devices.splice(index, 1)
+}
+
 /** Correlate captured access events to a device by its label. */
 export async function mockDeviceHistory(id: string): Promise<DeviceHistory> {
   await delay(340)
@@ -567,6 +670,29 @@ export async function mockMarkNotificationRead(id: string): Promise<AppNotificat
   if (!notification) throw new Error(`Notification ${id} not found`)
   notification.read = true
   return notification
+}
+
+export async function mockDeleteNotification(id: string): Promise<void> {
+  await delay(160)
+  const index = notifications.findIndex((item) => item.id === id)
+  if (index === -1) throw new Error(`Notification ${id} not found`)
+  notifications.splice(index, 1)
+}
+
+export async function mockDeleteAllNotifications(
+  filters: MockNotificationFilters = {},
+): Promise<{ deleted: number }> {
+  await delay(200)
+  const kept = notifications.filter((notification) => {
+    const matchesSearch = matches(`${notification.title} ${notification.message}`, filters.search)
+    const matchesCategory =
+      !filters.category || filters.category === 'all' || notification.category === filters.category
+    const matchesUnread = !filters.unreadOnly || !notification.read
+    return !(matchesSearch && matchesCategory && matchesUnread)
+  })
+  const deleted = notifications.length - kept.length
+  notifications.splice(0, notifications.length, ...kept)
+  return { deleted }
 }
 
 export async function mockMarkAllNotificationsRead(): Promise<void> {
@@ -687,10 +813,7 @@ export async function mockLookupWatermark(input: {
   return {
     record,
     hashMatches,
-    extractedLines: [
-      `${record.recipientUsername} | ${watermarkStampOf(new Date(record.generatedAt))}`,
-      record.accessId,
-    ],
+    extractedLines: [record.recipientUsername],
     summary: hashMatches
       ? `Byte-exact match. This rendition was generated for “${record.recipientUsername}” and is bound to access ID ${record.accessId}.`
       : `Matched on access ID ${record.accessId}. Confirm the extracted watermark lines against the stored record before attributing the leak.`,
@@ -711,20 +834,24 @@ function tokenFlags(token: string) {
   }
 }
 
-const demoRecipient = recipients.find((item) => item.status === 'ACTIVE')
-
-/** Resolve the file a mock viewer link points at. With no fixtures there is none. */
-function demoViewerFile(): SecureFile {
-  const file = files.find((item) => item.id === demoRecipient?.fileId) ?? files[0]
-  if (!file) {
+/** Resolve the protected images bound to a mock recipient link. */
+function demoViewerFiles(token: string): { files: SecureFile[]; album: Album | null } {
+  const target = mockLinkTargets.get(token)
+  const fallback = files[0]
+  const resolved = target ?? (fallback ? { files: [fallback], album: null } : null)
+  if (!resolved || resolved.files.length === 0) {
     throw { status: 404, code: 'invalid_link', message: 'This access link is not valid.' }
   }
-  return file
+  return resolved
 }
 
 function demoLinkContext(token: string): ViewerLinkContext {
   const flags = tokenFlags(token)
-  const file = demoViewerFile()
+  const target = demoViewerFiles(token)
+  const file = target.files[0]
+  if (!file) {
+    throw { status: 404, code: 'invalid_link', message: 'This access link is not valid.' }
+  }
   const state: ViewerLinkContext['state'] = flags.invalid
     ? 'INVALID'
     : flags.revoked
@@ -736,9 +863,11 @@ function demoLinkContext(token: string): ViewerLinkContext {
           : 'ACTIVE'
   return {
     fileId: file.id,
-    fileName: file.name,
+    fileName: target.album?.name ?? file.name,
     fileKind: file.kind,
     extension: file.extension,
+    albumId: target.album?.id,
+    imageCount: target.files.length,
     ownerName: MOCK_USER.fullName,
     organization: MOCK_USER.organization,
     state,
@@ -752,26 +881,36 @@ export async function mockResolveViewerToken(token: string): Promise<ViewerLinkC
 }
 
 function buildViewerSession(token: string, username: string): ViewerSession {
-  const file = demoViewerFile()
+  const target = demoViewerFiles(token)
+  const file = target.files[0]
+  if (!file) throw new Error('No images are attached to this link.')
   const accessReference = makeAccessId()
   const issuedAt = new Date()
-  const watermarkLines = [
-    `${username} | ${watermarkStampOf(issuedAt)}`,
-    `SecureFile · ${accessReference}`,
-  ]
-  const session: ViewerSession = {
-    sessionId: `vs_${makeHex(10)}`,
-    fileId: file.id,
-    fileName: file.name,
-    fileKind: file.kind,
-    extension: file.extension,
+  const watermarkLines = [username]
+  const images = target.files.map((image) => ({
+    fileId: image.id,
+    fileName: image.name,
+    fileKind: image.kind,
+    extension: image.extension,
     contentUrl: buildRenditionPreview({
-      title: file.name,
+      title: image.name,
       subtitle: 'Recipient-scoped rendition · watermarked by SecureFile',
       watermarkLines,
       opacity: 0.18,
       size: 1,
     }),
+    watermarkLines,
+  }))
+  const session: ViewerSession = {
+    sessionId: `vs_${makeHex(10)}`,
+    fileId: file.id,
+    fileName: target.album?.name ?? file.name,
+    fileKind: file.kind,
+    extension: file.extension,
+    albumId: target.album?.id,
+    imageCount: images.length,
+    images,
+    contentUrl: images[0]?.contentUrl ?? '',
     recipientUsername: username,
     accessId: accessReference,
     watermarkLines,

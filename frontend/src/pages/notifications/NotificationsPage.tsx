@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BellOff, CheckCheck, Inbox, Settings2 } from 'lucide-react'
+import { BellOff, CheckCheck, Inbox, Settings2, Trash2 } from 'lucide-react'
 
 import {
   Button,
   Card,
   CardHeader,
+  ConfirmDialog,
   EmptyState,
   ErrorState,
+  IconButton,
   PageHeader,
   Pagination,
   SearchInput,
@@ -65,6 +67,8 @@ export default function NotificationsPage() {
   const [category, setCategory] = useState('all')
   const [unreadOnly, setUnreadOnly] = useState(false)
   const { page, pageSize, setPage, setPageSize, reset } = usePagination(10)
+  const [removing, setRemoving] = useState<AppNotification | null>(null)
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false)
 
   useEffect(() => {
     reset()
@@ -138,6 +142,36 @@ export default function NotificationsPage() {
       setData(() => previous)
       unread.setData(() => previousUnread)
       toast.error('Could not mark all as read', toApiError(failure).message)
+    }
+  }
+
+  const handleRemoveNotification = async (notification: AppNotification) => {
+    try {
+      await notificationsService.remove(notification.id)
+      toast.success('Notification deleted')
+      if (notifications.length === 1 && page > 1) setPage(page - 1)
+      else await reload()
+      await unread.reload()
+    } catch (failure) {
+      toast.error('Could not delete notification', toApiError(failure).message)
+    }
+  }
+
+  const handleDeleteAll = async () => {
+    try {
+      const { deleted } = await notificationsService.removeAll({
+        search: debouncedSearch || undefined,
+        category: category === 'all' ? undefined : category,
+        unreadOnly: unreadOnly || undefined,
+      })
+      toast.success(
+        deleted > 0 ? `${deleted} ${deleted === 1 ? 'notification' : 'notifications'} deleted` : 'Nothing to delete',
+      )
+      if (page !== 1) setPage(1)
+      else await reload()
+      await unread.reload()
+    } catch (failure) {
+      toast.error('Could not clear notifications', toApiError(failure).message)
     }
   }
 
@@ -238,6 +272,16 @@ export default function NotificationsPage() {
               >
                 Mark all as read
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                leftIcon={<Trash2 size={15} />}
+                className="text-danger-600 hover:border-danger-200 hover:bg-danger-50"
+                disabled={totalItems === 0}
+                onClick={() => setConfirmDeleteAll(true)}
+              >
+                Delete all
+              </Button>
             </div>
           </div>
 
@@ -274,53 +318,69 @@ export default function NotificationsPage() {
             <ul className="divide-y divide-line">
               {notifications.map((notification) => (
                 <li key={notification.id}>
-                  <button
-                    type="button"
-                    onClick={() => void handleOpen(notification)}
-                    className={cn(
-                      'flex w-full items-start gap-3 px-4 py-3.5 text-left transition-colors sm:px-5',
-                      notification.read ? 'hover:bg-surface-subtle/50' : 'bg-brand-50/30 hover:bg-brand-50/50',
-                    )}
-                  >
-                    <span className="mt-1.5">
-                      <StatusDot
-                        tone={NOTIFICATION_SEVERITY_META[notification.severity].tone}
-                        pulse={!notification.read}
-                      />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p
-                          className={cn(
-                            'text-[13px]',
-                            notification.read ? 'font-medium text-ink-soft' : 'font-semibold text-ink',
-                          )}
-                        >
-                          {notification.title}
-                        </p>
-                        <SeverityBadge severity={notification.severity} />
-                        <span className="text-[11.5px] text-ink-muted">
-                          {NOTIFICATION_CATEGORY_META[notification.category].label}
-                        </span>
-                      </div>
-                      <p className="mt-0.5 text-[12.5px] leading-5 text-ink-muted">
-                        {notification.message}
-                      </p>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <span
-                        className="text-[11.5px] whitespace-nowrap text-ink-muted"
-                        title={formatDateTime(notification.createdAt)}
+                    <div
+                      className={cn(
+                        'flex items-start gap-3 px-4 py-3.5 transition-colors sm:px-5',
+                        notification.read
+                          ? 'hover:bg-surface-subtle/50'
+                          : 'bg-brand-50/30 hover:bg-brand-50/50',
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => void handleOpen(notification)}
+                        aria-label={`Open notification: ${notification.title}`}
+                        className="flex min-w-0 flex-1 items-start gap-3 text-left"
                       >
-                        {formatRelativeTime(notification.createdAt)}
-                      </span>
-                      {!notification.read ? (
-                        <span className="mt-1 block text-[11px] font-medium text-brand-600">
-                          Unread
+                        <span className="mt-1.5">
+                          <StatusDot
+                            tone={NOTIFICATION_SEVERITY_META[notification.severity].tone}
+                            pulse={!notification.read}
+                          />
                         </span>
-                      ) : null}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p
+                              className={cn(
+                                'text-[13px]',
+                                notification.read
+                                  ? 'font-medium text-ink-soft'
+                                  : 'font-semibold text-ink',
+                              )}
+                            >
+                              {notification.title}
+                            </p>
+                            <SeverityBadge severity={notification.severity} />
+                            <span className="text-[11.5px] text-ink-muted">
+                              {NOTIFICATION_CATEGORY_META[notification.category].label}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-[12.5px] leading-5 text-ink-muted">
+                            {notification.message}
+                          </p>
+                        </div>
+                      </button>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <span
+                          className="text-[11.5px] whitespace-nowrap text-ink-muted"
+                          title={formatDateTime(notification.createdAt)}
+                        >
+                          {formatRelativeTime(notification.createdAt)}
+                        </span>
+                        {!notification.read ? (
+                          <span className="text-[11px] font-medium text-brand-600">Unread</span>
+                        ) : null}
+                        <IconButton
+                          label={`Delete notification: ${notification.title}`}
+                          size="sm"
+                          variant="ghost"
+                          className="text-danger-600 hover:bg-danger-50"
+                          onClick={() => setRemoving(notification)}
+                        >
+                          <Trash2 size={15} />
+                        </IconButton>
+                      </div>
                     </div>
-                  </button>
                 </li>
               ))}
             </ul>
@@ -447,6 +507,32 @@ export default function NotificationsPage() {
           )}
         </Card>
       )}
+
+      <ConfirmDialog
+        open={Boolean(removing)}
+        onClose={() => setRemoving(null)}
+        onConfirm={async () => {
+          if (removing) await handleRemoveNotification(removing)
+        }}
+        title="Delete notification?"
+        description={`Delete “${removing?.title ?? 'this notification'}” from your inbox? The related access and security history will remain available in monitoring.`}
+        confirmLabel="Delete notification"
+        tone="danger"
+      />
+
+      <ConfirmDialog
+        open={confirmDeleteAll}
+        onClose={() => setConfirmDeleteAll(false)}
+        onConfirm={handleDeleteAll}
+        title="Delete all notifications?"
+        description={
+          hasFilters
+            ? `Permanently delete every notification matching the current filters (${totalItems} in total)? This cannot be undone. The related security history remains in monitoring.`
+            : `Permanently delete all ${totalItems} notification${totalItems === 1 ? '' : 's'} in your inbox? This cannot be undone. The related security history remains in monitoring.`
+        }
+        confirmLabel="Delete all"
+        tone="danger"
+      />
     </div>
   )
 }

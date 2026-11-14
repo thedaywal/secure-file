@@ -1,5 +1,4 @@
-import { request, withMockFallback } from '@/services/api'
-import * as mock from '@/services/mock'
+import { loadMock, request, withMockFallback } from '@/services/api'
 import type { Device, DeviceHistory, Paginated, PaginationParams } from '@/types'
 
 export interface DeviceFilters extends PaginationParams {
@@ -22,7 +21,7 @@ export const devicesService = {
             owner_username: filters.ownerUsername,
           },
         }),
-      () => mock.mockListDevices(filters),
+      async () => (await loadMock()).mockListDevices(filters),
     )
   },
 
@@ -35,7 +34,14 @@ export const devicesService = {
           method: 'PATCH',
           data: { trust_status: trustStatus },
         }),
-      () => mock.mockSetDeviceTrust(id, trustStatus),
+      async () => (await loadMock()).mockSetDeviceTrust(id, trustStatus),
+    )
+  },
+
+  remove(id: string): Promise<void> {
+    return withMockFallback(
+      () => request<void>({ url: `/devices/${id}/`, method: 'DELETE' }),
+      async () => (await loadMock()).mockDeleteDevice(id),
     )
   },
 
@@ -43,7 +49,7 @@ export const devicesService = {
   history(id: string): Promise<DeviceHistory> {
     return withMockFallback(
       () => request<DeviceHistory>({ url: `/devices/${id}/history/`, method: 'GET' }),
-      () => mock.mockDeviceHistory(id),
+      async () => (await loadMock()).mockDeviceHistory(id),
     )
   },
 }

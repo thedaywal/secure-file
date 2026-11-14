@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from core.crypto import decrypt_bytes, encrypt_bytes
@@ -15,6 +16,7 @@ def issue_link(recipient: Recipient, expires_at=None) -> tuple[ShareLink, str]:
     plaintext = random_token(32)
     link = ShareLink.objects.create(
         file=recipient.file,
+        album=recipient.album,
         recipient=recipient,
         token_hash=sha256_hex(plaintext),
         token_sealed=encrypt_bytes(plaintext.encode('utf-8')),
@@ -34,7 +36,7 @@ def build_share_url(plaintext_token: str) -> str:
 
 def find_link_by_token(token: str) -> ShareLink | None:
     return (
-        ShareLink.objects.select_related('recipient', 'file', 'file__owner')
+        ShareLink.objects.select_related('recipient', 'file', 'file__owner', 'album')
         .filter(token_hash=sha256_hex(token))
         .first()
     )
@@ -65,6 +67,7 @@ def start_session(link: ShareLink, recipient: Recipient, access_id: str, ip: str
         link=link,
         recipient=recipient,
         file=link.file,
+        album=link.album,
         access_id=access_id,
         expires_at=timezone.now() + timezone.timedelta(minutes=duration),
         ip=ip,
@@ -81,6 +84,17 @@ def revoke_link(link: ShareLink) -> ShareLink:
         session.revoked_at = timezone.now()
         session.save(update_fields=['revoked_at'])
     return link
+
+
+def revoke_links_for_file(file) -> None:
+    """Revoke direct links and any album links containing this image."""
+    links = (
+        ShareLink.objects.filter(Q(file=file) | Q(album__images__file=file))
+        .exclude(state=LinkState.REVOKED)
+        .distinct()
+    )
+    for link in links:
+        revoke_link(link)
 
 
 def reissue_link(previous: ShareLink) -> tuple[ShareLink, str]:

@@ -14,7 +14,7 @@
 interface PreviewOptions {
   title: string
   subtitle?: string
-  /** Repeated diagonal watermark lines: recipient username + access timestamp. */
+  /** Repeated diagonal watermark lines: the recipient username. */
   watermarkLines: string[]
   opacity: number
   size: number
@@ -38,7 +38,7 @@ function renderWatermark(options: PreviewOptions, width: number, height: number)
   if (watermarkLines.length === 0) return ''
 
   const fontSize = Math.round(15 * size)
-  const fillOpacity = Math.max(0.05, Math.min(opacity, 0.6))
+  const fillOpacity = Math.max(0.05, Math.min(opacity, 0.9))
 
   const renderBlock = (cx: number, cy: number) => {
     const lines = watermarkLines
@@ -47,7 +47,7 @@ function renderWatermark(options: PreviewOptions, width: number, height: number)
           `<tspan x="${cx}" dy="${index === 0 ? 0 : fontSize + 4}">${escapeXml(line)}</tspan>`,
       )
       .join('')
-    return `<text x="${cx}" y="${cy}" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="${fontSize}" font-weight="600" fill="#0f172a" fill-opacity="${fillOpacity}" letter-spacing="0.4" transform="rotate(-30 ${cx} ${cy})">${lines}</text>`
+    return `<text x="${cx}" y="${cy}" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="${fontSize}" font-weight="700" fill="#000000" fill-opacity="${fillOpacity}" letter-spacing="0.4" transform="rotate(-30 ${cx} ${cy})">${lines}</text>`
   }
 
   const blocks: string[] = []

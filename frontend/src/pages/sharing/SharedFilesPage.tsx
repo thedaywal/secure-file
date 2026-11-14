@@ -7,6 +7,7 @@ import {
   MoreVertical,
   Share2,
   SlidersHorizontal,
+  Trash2,
 } from 'lucide-react'
 
 import {
@@ -66,46 +67,58 @@ interface ShareActions {
   onViewFile: (share: ShareLink) => void
   onEditPermissions: (share: ShareLink) => void
   onRevoke: (share: ShareLink) => void
+  onRemoveRecipient: (share: ShareLink) => void
 }
 
 function ShareRowActions({ share, actions }: { share: ShareLink; actions: ShareActions }) {
   return (
-    <Dropdown
-      align="right"
-      trigger={({ toggle }) => (
-        <IconButton label="Share actions" size="sm" variant="ghost" onClick={toggle}>
-          <MoreVertical size={16} />
-        </IconButton>
-      )}
-      items={[
-        {
-          id: 'recipient-activity',
-          label: 'View activity',
-          icon: <Activity size={15} />,
-          onSelect: () => actions.onViewActivity(share),
-        },
-        {
-          id: 'file-activity',
-          label: 'File activity',
-          icon: <FileSearch size={15} />,
-          onSelect: () => actions.onViewFile(share),
-        },
-        {
-          id: 'edit-permissions',
-          label: 'Edit permissions',
-          icon: <SlidersHorizontal size={15} />,
-          onSelect: () => actions.onEditPermissions(share),
-        },
-        {
-          id: 'revoke',
-          label: 'Revoke access',
-          icon: <Ban size={15} />,
-          tone: 'danger',
-          separated: true,
-          onSelect: () => actions.onRevoke(share),
-        },
-      ]}
-    />
+    <div className="flex items-center justify-end gap-1">
+      <IconButton
+        label={`Delete recipient ${share.recipientUsername}`}
+        size="sm"
+        variant="ghost"
+        className="text-danger-600 hover:bg-danger-50"
+        onClick={() => actions.onRemoveRecipient(share)}
+      >
+        <Trash2 size={15} />
+      </IconButton>
+      <Dropdown
+        align="right"
+        trigger={({ toggle }) => (
+          <IconButton label="Share actions" size="sm" variant="ghost" onClick={toggle}>
+            <MoreVertical size={16} />
+          </IconButton>
+        )}
+        items={[
+          {
+            id: 'recipient-activity',
+            label: 'View activity',
+            icon: <Activity size={15} />,
+            onSelect: () => actions.onViewActivity(share),
+          },
+          {
+            id: 'file-activity',
+            label: 'File activity',
+            icon: <FileSearch size={15} />,
+            onSelect: () => actions.onViewFile(share),
+          },
+          {
+            id: 'edit-permissions',
+            label: 'Edit permissions',
+            icon: <SlidersHorizontal size={15} />,
+            onSelect: () => actions.onEditPermissions(share),
+          },
+          {
+            id: 'revoke',
+            label: 'Revoke access',
+            icon: <Ban size={15} />,
+            tone: 'danger',
+            separated: true,
+            onSelect: () => actions.onRevoke(share),
+          },
+        ]}
+      />
+    </div>
   )
 }
 
@@ -134,6 +147,7 @@ export default function SharedFilesPage() {
   const { page, pageSize, setPage, setPageSize, reset } = usePagination(8)
   const [permissionsShare, setPermissionsShare] = useState<ShareLink | null>(null)
   const [revoking, setRevoking] = useState<ShareLink | null>(null)
+  const [removingRecipient, setRemovingRecipient] = useState<ShareLink | null>(null)
 
   /* The topbar global search links here with ?search=…, so mirror it. */
   if (searchParam !== syncedSearchParam) {
@@ -167,6 +181,7 @@ export default function SharedFilesPage() {
     onViewFile: (share) => navigate(adminPath(`/monitoring/files/${share.fileId}`)),
     onEditPermissions: (share) => setPermissionsShare(share),
     onRevoke: (share) => setRevoking(share),
+    onRemoveRecipient: (share) => setRemovingRecipient(share),
   }
 
   const handleRevoke = async (share: ShareLink) => {
@@ -176,6 +191,17 @@ export default function SharedFilesPage() {
       await reload()
     } catch (failure) {
       toast.error('Could not revoke access', toApiError(failure).message)
+    }
+  }
+
+  const handleRemoveRecipient = async (share: ShareLink) => {
+    try {
+      await sharesService.removeRecipient(share.recipientId)
+      toast.success('Recipient deleted', `${share.recipientUsername} and their access links were removed.`)
+      if (shares.length === 1 && page > 1) setPage(page - 1)
+      else await reload()
+    } catch (failure) {
+      toast.error('Could not delete recipient', toApiError(failure).message)
     }
   }
 
@@ -247,6 +273,9 @@ export default function SharedFilesPage() {
                         {share.recipientUsername}
                       </p>
                       <p className="truncate text-[12px] text-ink-muted">{share.fileName}</p>
+                      {share.albumId ? (
+                        <p className="text-[11px] text-ink-muted">{share.imageCount} images</p>
+                      ) : null}
                     </div>
                   </div>
                   <ShareRowActions share={share} actions={actions} />
@@ -318,6 +347,9 @@ export default function SharedFilesPage() {
                           <p className="max-w-[190px] truncate text-[13px] text-ink-soft">
                             {share.fileName}
                           </p>
+                          {share.albumId ? (
+                            <p className="text-[11px] text-ink-muted">{share.imageCount} images</p>
+                          ) : null}
                           <p className="font-mono text-[11px] text-ink-muted">
                             {share.tokenPreview}
                           </p>
@@ -388,6 +420,22 @@ export default function SharedFilesPage() {
         title="Revoke access?"
         description={`Revoke the share link for ${revoking?.recipientUsername ?? 'this recipient'}? They will immediately lose access to ${revoking?.fileName ?? 'the file'}.`}
         confirmLabel="Revoke access"
+        tone="danger"
+      />
+
+      <ConfirmDialog
+        open={Boolean(removingRecipient)}
+        onClose={() => setRemovingRecipient(null)}
+        onConfirm={async () => {
+          if (removingRecipient) await handleRemoveRecipient(removingRecipient)
+        }}
+        title="Delete recipient?"
+        description={
+          removingRecipient
+            ? `${removingRecipient.recipientUsername} will lose access to ${removingRecipient.fileName}${removingRecipient.albumId ? ` (${removingRecipient.imageCount} images)` : ''}. Their links and sessions will be deleted; access logs and watermark records are kept.`
+            : undefined
+        }
+        confirmLabel="Delete recipient"
         tone="danger"
       />
     </div>

@@ -1,5 +1,5 @@
-import { request, withMockFallback } from '@/services/api'
-import * as mock from '@/services/mock'
+import { loadMock, request, withMockFallback } from '@/services/api'
+import { env } from '@/config/env'
 import type { ViewerLinkContext, ViewerSession, ViewerViewEvent } from '@/types'
 
 /**
@@ -22,7 +22,7 @@ export const viewerService = {
   resolveToken(token: string): Promise<ViewerLinkContext> {
     return withMockFallback(
       () => request<ViewerLinkContext>({ url: `/public/links/${token}/`, method: 'GET' }),
-      () => mock.mockResolveViewerToken(token),
+      async () => (await loadMock()).mockResolveViewerToken(token),
     )
   },
 
@@ -39,7 +39,7 @@ export const viewerService = {
           method: 'POST',
           data: { username, password },
         }),
-      () => mock.mockAuthenticateViewer(token, username, password),
+      async () => (await loadMock()).mockAuthenticateViewer(token, username, password),
     )
   },
 
@@ -47,7 +47,7 @@ export const viewerService = {
   currentSession(token: string): Promise<ViewerSession> {
     return withMockFallback(
       () => request<ViewerSession>({ url: `/public/links/${token}/session/`, method: 'GET' }),
-      () => mock.mockGetViewerSession(token),
+      async () => (await loadMock()).mockGetViewerSession(token),
     )
   },
 
@@ -59,8 +59,22 @@ export const viewerService = {
           url: `/public/sessions/${sessionId}/heartbeat/`,
           method: 'POST',
         }),
-      () => mock.mockViewerHeartbeat(sessionId),
+      async () => (await loadMock()).mockViewerHeartbeat(sessionId),
     )
+  },
+
+  /**
+   * End the viewing session immediately. Called from `pagehide` and
+   * `visibilitychange` so the session ends the moment the recipient minimises
+   * the browser or leaves the page. `sendBeacon` is the only transport that
+   * reliably survives page teardown, so there is no response to await — the
+   * backend also abandons a session whose heartbeat stops, which covers a
+   * beacon that never arrives.
+   */
+  closeSession(sessionId: string): void {
+    const url = `${env.apiBaseUrl}/public/sessions/${sessionId}/close/`
+    if (typeof navigator.sendBeacon === 'function' && navigator.sendBeacon(url)) return
+    void fetch(url, { method: 'POST', keepalive: true, credentials: 'include' })
   },
 
   recordEvent(sessionId: string, payload: ViewerViewEvent): Promise<void> {
@@ -71,7 +85,7 @@ export const viewerService = {
           method: 'POST',
           data: payload,
         }),
-      () => mock.mockLogViewerEvent(),
+      async () => (await loadMock()).mockLogViewerEvent(),
     )
   },
 }

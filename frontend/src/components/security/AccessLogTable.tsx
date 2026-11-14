@@ -1,8 +1,9 @@
-import { Globe, Monitor } from 'lucide-react'
+import { Ban, Globe, Monitor, Trash2 } from 'lucide-react'
 
 import {
   Avatar,
   Badge,
+  IconButton,
   Table,
   TableBody,
   TableCell,
@@ -22,6 +23,12 @@ export interface AccessLogTableProps {
   onRowClick?: (log: AccessLog) => void
   /** Hides the file column when the table is already scoped to one file. */
   hideFile?: boolean
+  /** When provided, renders a per-row delete action. */
+  onDelete?: (log: AccessLog) => void
+  /** When provided, renders a per-row "block this address" action. */
+  onBlockIP?: (log: AccessLog) => void
+  /** Addresses already on the blocklist, so the block action can be disabled. */
+  blockedAddresses?: string[]
   emptyState?: React.ReactNode
 }
 
@@ -31,11 +38,15 @@ export function AccessLogTable({
   loading,
   onRowClick,
   hideFile,
+  onDelete,
+  onBlockIP,
+  blockedAddresses = [],
   emptyState,
 }: AccessLogTableProps) {
-  if (loading) return <TableSkeleton rows={6} columns={hideFile ? 6 : 7} />
+  const showActions = Boolean(onDelete || onBlockIP)
+  const columnCount = (hideFile ? 6 : 7) + (showActions ? 1 : 0)
 
-  const columnCount = hideFile ? 6 : 7
+  if (loading) return <TableSkeleton rows={6} columns={columnCount} />
 
   return (
     <Table>
@@ -47,6 +58,7 @@ export function AccessLogTable({
         <TableHeaderCell>Event</TableHeaderCell>
         <TableHeaderCell>Result</TableHeaderCell>
         <TableHeaderCell align="right">Timestamp</TableHeaderCell>
+        {showActions ? <TableHeaderCell align="right">Actions</TableHeaderCell> : null}
       </TableHead>
       <TableBody>
         {logs.length === 0 ? (
@@ -135,6 +147,39 @@ export function AccessLogTable({
                   {formatRelativeTime(log.occurredAt)}
                 </p>
               </TableCell>
+
+              {showActions ? (
+                <TableCell align="right">
+                  <div
+                    className="flex items-center justify-end gap-1"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {onBlockIP ? (
+                      <IconButton
+                        label={`Block address ${log.ip}`}
+                        size="sm"
+                        variant="ghost"
+                        disabled={!log.ip || blockedAddresses.includes(log.ip)}
+                        className="text-danger-600 hover:bg-danger-50"
+                        onClick={() => onBlockIP(log)}
+                      >
+                        <Ban size={15} />
+                      </IconButton>
+                    ) : null}
+                    {onDelete ? (
+                      <IconButton
+                        label="Delete access event"
+                        size="sm"
+                        variant="ghost"
+                        className="text-danger-600 hover:bg-danger-50"
+                        onClick={() => onDelete(log)}
+                      >
+                        <Trash2 size={15} />
+                      </IconButton>
+                    ) : null}
+                  </div>
+                </TableCell>
+              ) : null}
             </TableRow>
           ))
         )}
@@ -142,3 +187,4 @@ export function AccessLogTable({
     </Table>
   )
 }
+

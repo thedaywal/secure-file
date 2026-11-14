@@ -12,13 +12,15 @@ export type {
   PolicySummaryRow,
   PolicySummarySection,
 } from '@/components/files/PolicyEditor'
+export { BulkRecipientModal } from '@/components/files/BulkRecipientModal'
+export type { BulkRecipientModalProps } from '@/components/files/BulkRecipientModal'
 export {
   RecipientFormModal,
   RecipientPermissionsFields,
   RecipientRow,
   createRecipientDraft,
   permissionChipLabels,
-  recipientFromShare,
+  recipientsFromShares,
 } from '@/components/files/RecipientEditor'
 export type {
   RecipientDraft,

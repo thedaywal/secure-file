@@ -17,7 +17,12 @@
 	# Django REST API. This also covers /api/health/ and the public recipient
 	# viewer at /api/public/, including the signed watermarked-rendition URLs.
 	handle /api/* {
-		reverse_proxy 127.0.0.1:8000
+		reverse_proxy 127.0.0.1:8000 {
+			# Record the real client address explicitly. X-Forwarded-For can
+			# carry private/loopback hops, so the backend also receives the
+			# direct peer here and prefers the first public address it sees.
+			header_up X-Real-IP {remote_host}
+		}
 	}
 
 	# Admin/DRF static files collected by `manage.py collectstatic` and served
@@ -32,6 +37,19 @@
 	# work on a hard refresh.
 	handle {
 		root * {$SECUREFILE_ROOT:C:/securefile}/frontend/dist
+
+		# Vite fingerprints every file in /assets with a content hash, so those
+		# URLs are immutable and can be cached aggressively instead of being
+		# revalidated on every navigation.
+		@fingerprinted path /assets/*
+		header @fingerprinted Cache-Control "public, max-age=31536000, immutable"
+
+		# Everything else in the SPA block is the HTML shell (including deep links
+		# that fall back to it), which must be revalidated so a new deploy is
+		# picked up immediately.
+		@shell not path /assets/*
+		header @shell Cache-Control "no-cache"
+
 		try_files {path} /index.html
 		file_server
 	}

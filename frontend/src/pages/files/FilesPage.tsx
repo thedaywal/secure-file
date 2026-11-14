@@ -256,7 +256,7 @@ export default function FilesPage() {
           if (pending) await handleDelete(pending.file)
         }}
         title="Delete file?"
-        description={`Permanently delete “${pending?.file.name ?? 'this file'}” and revoke its share links? This cannot be undone.`}
+        description={`Permanently delete “${pending?.file.name ?? 'this file'}” and revoke its share links? Its watermark rendition records will also be deleted; access logs are retained. This cannot be undone.`}
         confirmLabel="Delete file"
         tone="danger"
       />

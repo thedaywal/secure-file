@@ -24,41 +24,134 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.signing import sign, sign_query, verify as verify_signature
-from core.utils import client_ip, make_access_id, sha256_hex
-from monitoring.models import AccessEventType
-from monitoring.services import record_access, upsert_device
-from securefiles.models import get_or_create_policy
+from core.utils import client_ip, is_phone, make_access_id, sha256_hex
+from monitoring.models import AccessEventType, is_blocked
+from monitoring.services import (
+    guard_link_reuse,
+    guard_repeated_failures,
+    record_access,
+    upsert_device,
+)
+from securefiles.models import ProtectionStatus, get_or_create_policy
 from sharing.models import LinkState, ViewerSession
-from sharing.services import consume_link, find_link_by_token, start_session
+from sharing.services import consume_link, find_link_by_token, revoke_link, start_session
+from watermarks.models import WatermarkRecord
 from watermarks.services import create_rendition
 from watermarks.storage import read_rendition
 
 VIEWER_COOKIE = 'sf_viewer'
 MAX_FAILED_PASSWORD_LENGTH_GUARD = 4096
+# A page that resolves the same link twice (re-mount, refresh, double tap) is one
+# visit; only a later, genuinely separate open is recorded as a new event.
+LINK_OPENED_DEDUPE_SECONDS = 60
+
+BLOCKED_RESPONSE = {
+    'detail': 'Access from this network has been blocked. Ask the sender if you believe this is a mistake.',
+    'code': 'ip_blocked',
+}
+
+MOBILE_ONLY_RESPONSE = {
+    'detail': 'This protected link can only be opened on a mobile phone. Open it on your phone to continue.',
+    'code': 'mobile_only',
+}
 
 
-def _content_url(request, session: ViewerSession) -> str:
-    path = f'/api/public/sessions/{session.id}/content/'
+def _blocked_call(request, file, share, recipient_username: str = '') -> bool:
+    """Record and report a request from a blocked address. Returns True if blocked."""
+    if not is_blocked(client_ip(request)):
+        return False
+    record_access(
+        AccessEventType.IP_BLOCKED,
+        request=request,
+        file=file,
+        share=share,
+        recipient_username=recipient_username,
+    )
+    return True
+
+
+def _mobile_only_call(request, file, share, recipient_username: str = '') -> bool:
+    """Record and report a request from a non-phone device. Returns True if blocked.
+
+    Recipient links are phone-only. This is a policy gate, not an authentication
+    factor: a user agent is trivially spoofed, so the single-use link remains the
+    real control and the attempt is recorded for the access monitor.
+    """
+    if is_phone(request.META.get('HTTP_USER_AGENT', '')):
+        return False
+    record_access(
+        AccessEventType.MOBILE_ONLY_BLOCKED,
+        request=request,
+        file=file,
+        share=share,
+        recipient_username=recipient_username,
+    )
+    return True
+
+
+def _content_url(request, session: ViewerSession, record: WatermarkRecord) -> str:
+    path = f'/api/public/sessions/{session.id}/content/{record.id}/'
     query = sign_query(path, settings.CONTENT_URL_TTL_SECONDS)
     return request.build_absolute_uri(f'{path}?{query}')
 
 
 def _session_payload(request, session: ViewerSession) -> dict:
-    record = getattr(session, 'watermark', None)
+    if session.album_id:
+        files = [
+            membership.file
+            for membership in session.album.images.select_related('file').all()
+        ]
+        records = {
+            record.file_id: record
+            for record in WatermarkRecord.objects.filter(session_id=session.id)
+        }
+    else:
+        files = [session.file]
+        record = getattr(session, 'watermark', None)
+        records = {record.file_id: record} if record else {}
+
+    images = [
+        {
+            'fileId': str(file.id),
+            'fileName': file.name,
+            'fileKind': file.kind,
+            'extension': file.extension,
+            'contentUrl': _content_url(request, session, records[file.id]),
+            'watermarkLines': list(records[file.id].watermark_lines),
+        }
+        for file in files
+        if file.id in records
+    ]
+    primary = images[0] if images else {}
+    file_name = session.album.name if session.album_id else session.file.name
     return {
         'sessionId': str(session.id),
         'fileId': str(session.file_id),
-        'fileName': session.file.name,
+        'albumId': str(session.album_id) if session.album_id else None,
+        'fileName': file_name,
         'fileKind': session.file.kind,
         'extension': session.file.extension,
-        'contentUrl': _content_url(request, session),
+        'imageCount': len(images),
+        'images': images,
+        'contentUrl': primary.get('contentUrl', ''),
         'recipientUsername': session.recipient.username,
         'accessId': session.access_id,
-        'watermarkLines': list(record.watermark_lines) if record else [],
+        'watermarkLines': primary.get('watermarkLines', []),
         'startedAt': session.started_at,
         'expiresAt': session.expires_at,
         'remainingSeconds': session.remaining_seconds,
     }
+
+
+def _shareable_files(link) -> list:
+    files = (
+        [membership.file for membership in link.album.images.select_related('file').all()]
+        if link.album_id
+        else [link.file]
+    )
+    if not files or any(file.effective_status != ProtectionStatus.PROTECTED for file in files):
+        return []
+    return files
 
 
 def _set_viewer_cookie(response, session: ViewerSession, request) -> None:
@@ -86,7 +179,7 @@ def _session_from_cookie(request) -> ViewerSession | None:
     if not verify_signature(f'viewer-session:{session_id}', exp, signature):
         return None
     return (
-        ViewerSession.objects.select_related('recipient', 'file', 'watermark', 'link')
+        ViewerSession.objects.select_related('recipient', 'file', 'album', 'watermark', 'link')
         .filter(pk=session_id)
         .first()
     )
@@ -115,7 +208,14 @@ class LinkResolveView(APIView):
             )
 
         file = link.file
+        album = link.album
         state = link.effective_state
+        if state == LinkState.ACTIVE and not _shareable_files(link):
+            state = LinkState.REVOKED
+        if _blocked_call(request, file, link, link.recipient.username):
+            return Response(BLOCKED_RESPONSE, status=status.HTTP_403_FORBIDDEN)
+        if _mobile_only_call(request, file, link, link.recipient.username):
+            return Response(MOBILE_ONLY_RESPONSE, status=status.HTTP_403_FORBIDDEN)
         event = {
             LinkState.ACTIVE: AccessEventType.LINK_OPENED,
             LinkState.EXPIRED: AccessEventType.EXPIRED_LINK,
@@ -135,14 +235,17 @@ class LinkResolveView(APIView):
             share=link,
             recipient_username=link.recipient.username,
             device=device,
+            dedupe_window_seconds=LINK_OPENED_DEDUPE_SECONDS,
         )
 
         return Response(
             {
                 'fileId': str(file.id),
-                'fileName': file.name,
+                'albumId': str(album.id) if album else None,
+                'fileName': album.name if album else file.name,
                 'fileKind': file.kind,
                 'extension': file.extension,
+                'imageCount': album.images.count() if album else 1,
                 'ownerName': file.owner.short_name if file.owner_id else 'SecureFile',
                 'organization': file.owner.organization if file.owner_id else '',
                 'state': state,
@@ -165,6 +268,11 @@ class LinkAuthenticateView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        if _blocked_call(request, link.file, link, link.recipient.username):
+            return Response(BLOCKED_RESPONSE, status=status.HTTP_403_FORBIDDEN)
+        if _mobile_only_call(request, link.file, link, link.recipient.username):
+            return Response(MOBILE_ONLY_RESPONSE, status=status.HTTP_403_FORBIDDEN)
+
         state = link.effective_state
         if state == LinkState.REVOKED:
             return Response(
@@ -183,6 +291,19 @@ class LinkAuthenticateView(APIView):
                     'code': 'link_consumed',
                 },
                 status=status.HTTP_409_CONFLICT,
+            )
+        image_files = _shareable_files(link)
+        if not image_files:
+            record_access(
+                AccessEventType.REVOKED_LINK,
+                request=request,
+                file=link.file,
+                share=link,
+                recipient_username=link.recipient.username,
+            )
+            return Response(
+                {'detail': 'This protected content is no longer available.', 'code': 'link_revoked'},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         username = str(request.data.get('username') or '').strip()
@@ -210,6 +331,37 @@ class LinkAuthenticateView(APIView):
                 share=link,
                 recipient_username=username or recipient.username,
             )
+            # Enough failures from one address gets it blocked outright.
+            address = client_ip(request)
+            guard_repeated_failures(
+                address,
+                reason='Repeated failed sign-ins on a protected link',
+                request=request,
+                file=link.file,
+                share=link,
+                recipient_username=username or recipient.username,
+            )
+            # A link that keeps failing is either under attack or shared widely:
+            # lock it and alert the owner rather than permitting endless guesses.
+            if link.failed_attempts >= settings.LINK_MAX_FAILED_ATTEMPTS:
+                revoke_link(link)
+                record_access(
+                    AccessEventType.LINK_LOCKED,
+                    request=request,
+                    file=link.file,
+                    share=link,
+                    recipient_username=recipient.username,
+                )
+                return Response(
+                    {
+                        'detail': (
+                            'This link has been locked after too many failed attempts. '
+                            'Ask the sender for a replacement link.'
+                        ),
+                        'code': 'link_locked',
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             return Response(
                 {
                     'detail': 'The username or password is incorrect.',
@@ -223,6 +375,15 @@ class LinkAuthenticateView(APIView):
         if not consume_link(link, client_ip(request)):
             record_access(
                 AccessEventType.LINK_REUSE_BLOCKED,
+                request=request,
+                file=link.file,
+                share=link,
+                recipient_username=recipient.username,
+            )
+            # Reusing a consumed link is a deliberate abuse signal: block the
+            # address outright so it appears in the blocked-address list.
+            guard_link_reuse(
+                client_ip(request),
                 request=request,
                 file=link.file,
                 share=link,
@@ -247,16 +408,21 @@ class LinkAuthenticateView(APIView):
         session.device = upsert_device(request=request, owner_username=recipient.username, file=link.file)
         session.save(update_fields=['device'])
 
-        record = create_rendition(
-            file=link.file,
-            recipient_username=recipient.username,
-            access_id=session.access_id,
-            session_id=session.id,
-            opacity=policy.watermark_opacity,
-            size=policy.watermark_size,
-            securefile_reference=policy.watermark_securefile_reference,
-        )
-        session.watermark = record
+        records = []
+        for image in image_files:
+            image_policy = policy if image.id == link.file_id else get_or_create_policy(image)
+            records.append(
+                create_rendition(
+                    file=image,
+                    recipient_username=recipient.username,
+                    access_id=session.access_id,
+                    session_id=session.id,
+                    opacity=image_policy.watermark_opacity,
+                    size=image_policy.watermark_size,
+                    securefile_reference=image_policy.watermark_securefile_reference,
+                )
+            )
+        session.watermark = records[0]
         session.save(update_fields=['watermark'])
 
         now = timezone.now()
@@ -313,7 +479,11 @@ class LinkSessionView(APIView):
 
 
 class SessionHeartbeatView(APIView):
-    """POST /api/public/sessions/{id}/heartbeat/ — enforce the session deadline."""
+    """POST /api/public/sessions/{id}/heartbeat/ — enforce the session deadline.
+
+    A heartbeat also refreshes `last_seen_at`, which is what lets the backend
+    treat a session whose close beacon never arrived as abandoned.
+    """
 
     authentication_classes: list = []
     permission_classes = [AllowAny]
@@ -330,7 +500,32 @@ class SessionHeartbeatView(APIView):
                 {'detail': 'Your viewing session has ended.', 'code': 'session_expired'},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
+        session.last_seen_at = timezone.now()
+        session.save(update_fields=['last_seen_at'])
         return Response({'remainingSeconds': session.remaining_seconds})
+
+
+class SessionCloseView(APIView):
+    """POST /api/public/sessions/{id}/close/ — end the session immediately.
+
+    Called from `visibilitychange`/`pagehide` so a session ends the moment the
+    recipient minimises the browser or leaves the page. The viewer cookie must
+    resolve to the same session, so a guessed id cannot end someone else's
+    session. Always answers 204: this is a fire-and-forget beacon with no
+    meaningful response for the sender to act on.
+    """
+
+    authentication_classes: list = []
+    permission_classes = [AllowAny]
+
+    def post(self, request, session_id):
+        session = _session_from_cookie(request)
+        if session is None or str(session.id) != str(session_id):
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        if session.revoked_at is None:
+            session.revoked_at = timezone.now()
+            session.save(update_fields=['revoked_at'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class SessionEventView(APIView):
@@ -381,7 +576,53 @@ class SessionContentView(APIView):
         if session is None or not session.is_active:
             return HttpResponse(status=status.HTTP_403_FORBIDDEN)
 
+        # The signed URL is a bearer capability, so the phone-only policy is
+        # enforced on delivery too — not only when the link is opened.
+        if _mobile_only_call(
+            request, session.file, session.link, session.recipient.username
+        ):
+            return HttpResponse(status=status.HTTP_403_FORBIDDEN)
+
         record = getattr(session, 'watermark', None)
+        if record is None or not record.rendition_path:
+            return HttpResponse(status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            payload = read_rendition(record.rendition_path)
+        except (OSError, ValueError):
+            return HttpResponse(status=status.HTTP_404_NOT_FOUND)
+
+        response = HttpResponse(payload, content_type=record.mime_type or 'image/jpeg')
+        response['Cache-Control'] = 'no-store'
+        response['Content-Disposition'] = 'inline'
+        return response
+
+
+class SessionRenditionContentView(APIView):
+    """Serve one member image from an authorized session's album."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def get(self, request, session_id, rendition_id):
+        path = f'/api/public/sessions/{session_id}/content/{rendition_id}/'
+        if not verify_signature(
+            path, request.query_params.get('exp'), request.query_params.get('sig', '')
+        ):
+            return HttpResponse(status=status.HTTP_403_FORBIDDEN)
+
+        session = ViewerSession.objects.filter(pk=session_id).first()
+        if session is None or not session.is_active:
+            return HttpResponse(status=status.HTTP_403_FORBIDDEN)
+
+        if _mobile_only_call(
+            request, session.file, session.link, session.recipient.username
+        ):
+            return HttpResponse(status=status.HTTP_403_FORBIDDEN)
+
+        record = WatermarkRecord.objects.filter(
+            pk=rendition_id, session_id=session.id
+        ).first()
         if record is None or not record.rendition_path:
             return HttpResponse(status=status.HTTP_404_NOT_FOUND)
 

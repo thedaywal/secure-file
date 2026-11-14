@@ -29,15 +29,6 @@ export function ViewerLayout() {
       <main className="flex flex-1 flex-col">
         <Outlet />
       </main>
-
-      <footer className="border-t border-line bg-surface">
-        <div className="mx-auto flex w-full max-w-5xl flex-col gap-1 px-4 py-4 text-[11.5px] text-ink-muted sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <p>
-            Access to this file is logged and permanently watermarked with your verified identity.
-          </p>
-          <p>SecureFile · Powered by Meridian Security Infrastructure</p>
-        </div>
-      </footer>
     </div>
   )
 }

@@ -9,6 +9,8 @@ import {
   Save,
   Share2,
   ShieldAlert,
+  Trash2,
+  Upload,
   UserPlus,
   Users,
 } from 'lucide-react'
@@ -34,12 +36,13 @@ import {
   Tabs,
 } from '@/components/common'
 import {
+  BulkRecipientModal,
   FileTypeIcon,
   PolicyEditor,
   RecipientFormModal,
   RecipientRow,
   buildPolicySummary,
-  recipientFromShare,
+  recipientsFromShares,
   watermarkPreviewLines,
 } from '@/components/files'
 import type { RecipientFormValues } from '@/components/files'
@@ -56,7 +59,8 @@ import { sharesService } from '@/services/shares.service'
 import { toApiError } from '@/services'
 import { cn } from '@/utils/cn'
 import { formatBytes, formatDate, formatUntil, truncateHash } from '@/utils/format'
-import { validatePolicy } from '@/utils/policy'
+import { createDefaultPermissions, validatePolicy } from '@/utils/policy'
+import type { ImportedRecipient } from '@/utils/recipientImport'
 import type { ApiError, FilePolicy, Recipient } from '@/types'
 
 const TAB_VALUES: readonly string[] = ['overview', 'policies', 'sharing', 'activity']
@@ -132,7 +136,7 @@ export default function FileDetailPage() {
   const [recipients, setRecipients] = useState<Recipient[]>([])
   useEffect(() => {
     if (!sharesState.data) return
-    setRecipients(sharesState.data.results.map(recipientFromShare))
+    setRecipients(recipientsFromShares(sharesState.data.results))
   }, [sharesState.data])
 
   /* Editable policy draft kept in sync with the fetched policy. */
@@ -150,11 +154,18 @@ export default function FileDetailPage() {
   )
 
   const [addOpen, setAddOpen] = useState(false)
+  const [bulkOpen, setBulkOpen] = useState(false)
   const [editing, setEditing] = useState<Recipient | null>(null)
   const [revoking, setRevoking] = useState<Recipient | null>(null)
   const [removing, setRemoving] = useState<Recipient | null>(null)
-  const [reissued, setReissued] = useState<{ recipient: Recipient; url: string } | null>(null)
+  /* The one-time link shown after adding a recipient or reissuing theirs. */
+  const [linkDialog, setLinkDialog] = useState<{
+    kind: 'created' | 'reissued'
+    username: string
+    url: string
+  } | null>(null)
   const [confirmRevokeFile, setConfirmRevokeFile] = useState(false)
+  const [confirmDeleteFile, setConfirmDeleteFile] = useState(false)
 
   const handleAddRecipient = async (values: RecipientFormValues) => {
     try {
@@ -170,16 +181,39 @@ export default function FileDetailPage() {
         ],
       })
       setRecipients((current) => [...result.recipients, ...current])
-      toast.success(
-        'Recipient added',
-        `${values.username} now has their own single-use link and watermarked rendition.`,
-      )
+      const newShare = result.shares[0]
+      if (newShare?.url) {
+        setLinkDialog({
+          kind: 'created',
+          username: values.username,
+          url: buildShareUrl(newShare.url),
+        })
+      }
       setAddOpen(false)
       await sharesState.reload({ silent: true })
       await fileState.reload({ silent: true })
     } catch (failure) {
       toast.error('Could not add recipient', toApiError(failure).message)
     }
+  }
+
+  const handleBulkAdd = async (rows: ImportedRecipient[]) => {
+    const result = await sharesService.createForFile(fileId, {
+      fileId,
+      recipients: rows.map((row) => ({
+        username: row.username,
+        password: row.password,
+        displayName: row.displayName,
+        permissions: createDefaultPermissions(),
+      })),
+    })
+    toast.success(
+      'Recipients added',
+      `${result.recipients.length} ${result.recipients.length === 1 ? 'recipient' : 'recipients'} can now access this file.`,
+    )
+    await sharesState.reload({ silent: true })
+    await fileState.reload({ silent: true })
+    return result
   }
 
   const handleEditPermissions = (values: RecipientFormValues) => {
@@ -211,7 +245,11 @@ export default function FileDetailPage() {
     }
     try {
       const updated = await sharesService.reissue(share.id)
-      setReissued({ recipient, url: buildShareUrl(updated.url) })
+      setLinkDialog({
+        kind: 'reissued',
+        username: recipient.username,
+        url: buildShareUrl(updated.url),
+      })
       setRecipients((current) =>
         current.map((item) => (item.id === recipient.id ? { ...item, status: 'ACTIVE' } : item)),
       )
@@ -265,6 +303,16 @@ export default function FileDetailPage() {
       await sharesState.reload({ silent: true })
     } catch (failure) {
       toast.error('Could not revoke access', toApiError(failure).message)
+    }
+  }
+
+  const handleDeleteFile = async () => {
+    try {
+      await filesService.remove(fileId)
+      toast.success('File deleted', `${file?.name ?? 'The file'} and its recipient access were removed.`)
+      navigate(adminPath('/files'), { replace: true })
+    } catch (failure) {
+      toast.error('Could not delete file', toApiError(failure).message)
     }
   }
 
@@ -365,6 +413,13 @@ export default function FileDetailPage() {
               onClick={() => setConfirmRevokeFile(true)}
             >
               Revoke access
+            </Button>
+            <Button
+              variant="danger"
+              leftIcon={<Trash2 size={16} />}
+              onClick={() => setConfirmDeleteFile(true)}
+            >
+              Delete file
             </Button>
           </>
         }
@@ -522,9 +577,18 @@ export default function FileDetailPage() {
             title={`Recipients (${recipients.length})`}
             description="Each recipient receives their own link and their own permanently watermarked rendition."
             actions={
-              <Button leftIcon={<UserPlus size={16} />} onClick={() => setAddOpen(true)}>
-                Add recipient
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  leftIcon={<Upload size={16} />}
+                  onClick={() => setBulkOpen(true)}
+                >
+                  Add in bulk
+                </Button>
+                <Button leftIcon={<UserPlus size={16} />} onClick={() => setAddOpen(true)}>
+                  Add recipient
+                </Button>
+              </div>
             }
           />
           {recipients.length === 0 ? (
@@ -599,6 +663,13 @@ export default function FileDetailPage() {
         onSubmit={handleAddRecipient}
       />
 
+      <BulkRecipientModal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        existingUsernames={recipients.map((recipient) => recipient.username)}
+        onSubmit={handleBulkAdd}
+      />
+
       <RecipientFormModal
         open={Boolean(editing)}
         onClose={() => setEditing(null)}
@@ -642,23 +713,27 @@ export default function FileDetailPage() {
       />
 
       <Modal
-        open={Boolean(reissued)}
-        onClose={() => setReissued(null)}
-        title="New single-use link"
-        description="Share this link with the recipient. It replaces their previous link."
-        footer={<Button onClick={() => setReissued(null)}>Done</Button>}
+        open={Boolean(linkDialog)}
+        onClose={() => setLinkDialog(null)}
+        title={linkDialog?.kind === 'reissued' ? 'New single-use link' : 'Recipient link ready'}
+        description={
+          linkDialog?.kind === 'reissued'
+            ? 'Share this link with the recipient. It replaces their previous link.'
+            : 'This link is shown once — copy it now and send it to the recipient.'
+        }
+        footer={<Button onClick={() => setLinkDialog(null)}>Done</Button>}
       >
-        {reissued ? (
+        {linkDialog ? (
           <div className="space-y-3">
-            <Alert tone="info" title="New link ready">
-              The previous link is now invalid. Copy the new link below and forward it to the
-              recipient — their username and password are unchanged.
+            <Alert
+              tone="info"
+              title={linkDialog.kind === 'reissued' ? 'New link ready' : 'Link ready'}
+            >
+              {linkDialog.kind === 'reissued'
+                ? 'The previous link is now invalid. Copy the new link below and forward it to the recipient — their username and password are unchanged.'
+                : `Send ${linkDialog.username} this single-use link along with the credentials you just set. The backend stores only a hash of the link, so it cannot be shown again — if it is lost, issue a new one.`}
             </Alert>
-            <CopyField
-              label={`Link for ${reissued.recipient.username}`}
-              value={reissued.url}
-              mono
-            />
+            <CopyField label={`Link for ${linkDialog.username}`} value={linkDialog.url} mono />
           </div>
         ) : null}
       </Modal>
@@ -670,6 +745,16 @@ export default function FileDetailPage() {
         title="Revoke all access?"
         description={`Revoke every active share link for ${file.name}? Recipients will lose access immediately.`}
         confirmLabel="Revoke access"
+        tone="danger"
+      />
+
+      <ConfirmDialog
+        open={confirmDeleteFile}
+        onClose={() => setConfirmDeleteFile(false)}
+        onConfirm={handleDeleteFile}
+        title="Permanently delete this file?"
+        description={`Delete the encrypted original for ${file.name} and revoke its recipient access? Associated watermark rendition records will also be removed, while access logs are retained. If this image belongs to an album, the album's links will be revoked too.`}
+        confirmLabel="Delete file"
         tone="danger"
       />
     </div>

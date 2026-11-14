@@ -23,7 +23,9 @@ class RecipientSerializer(serializers.Serializer):
     username = serializers.CharField(read_only=True)
     displayName = serializers.CharField(source='display_name', read_only=True)
     fileId = serializers.CharField(source='file_id', read_only=True)
-    fileName = serializers.CharField(source='file.name', read_only=True)
+    albumId = serializers.SerializerMethodField()
+    fileName = serializers.SerializerMethodField()
+    imageCount = serializers.SerializerMethodField()
     permissions = RecipientPermissionsSerializer(source='*', read_only=True)
     status = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
@@ -32,12 +34,23 @@ class RecipientSerializer(serializers.Serializer):
     def get_status(self, obj: Recipient) -> str:
         return obj.effective_state
 
+    def get_albumId(self, obj: Recipient) -> str | None:
+        return str(obj.album_id) if obj.album_id else None
+
+    def get_fileName(self, obj: Recipient) -> str:
+        return obj.album.name if obj.album_id else obj.file.name
+
+    def get_imageCount(self, obj: Recipient) -> int:
+        return obj.album.images.count() if obj.album_id else 1
+
 
 class ShareLinkSerializer(serializers.Serializer):
     id = serializers.CharField(read_only=True)
     fileId = serializers.CharField(source='file_id', read_only=True)
-    fileName = serializers.CharField(source='file.name', read_only=True)
+    albumId = serializers.SerializerMethodField()
+    fileName = serializers.SerializerMethodField()
     fileKind = serializers.CharField(source='file.kind', read_only=True)
+    imageCount = serializers.SerializerMethodField()
     recipientId = serializers.CharField(source='recipient_id', read_only=True)
     recipientUsername = serializers.CharField(source='recipient.username', read_only=True)
     permissions = RecipientPermissionsSerializer(source='recipient', read_only=True)
@@ -61,6 +74,15 @@ class ShareLinkSerializer(serializers.Serializer):
             return build_share_url(link_plaintext(obj))
         except Exception:  # pragma: no cover - defensive: never leak a broken link
             return ''
+
+    def get_albumId(self, obj: ShareLink) -> str | None:
+        return str(obj.album_id) if obj.album_id else None
+
+    def get_fileName(self, obj: ShareLink) -> str:
+        return obj.album.name if obj.album_id else obj.file.name
+
+    def get_imageCount(self, obj: ShareLink) -> int:
+        return obj.album.images.count() if obj.album_id else 1
 
     def get_state(self, obj: ShareLink) -> str:
         return obj.effective_state

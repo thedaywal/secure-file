@@ -56,12 +56,7 @@ export default function WatermarkDetailPage() {
   /* The lines the backend would have burned into the rendition. */
   const watermarkLines = useMemo(() => {
     if (!record) return []
-    return [
-      record.recipientUsername,
-      `Access ID ${record.accessId}`,
-      formatDateTime(record.generatedAt),
-      'SecureFile',
-    ]
+    return [record.recipientUsername]
   }, [record])
 
   const renditionUrl = useMemo(() => {
@@ -180,7 +175,6 @@ export default function WatermarkDetailPage() {
                 src={renditionUrl}
                 alt={`Watermarked rendition of ${record.fileName}`}
                 watermarkLines={watermarkLines}
-                caption="Preview of the backend-generated rendition. The recipient watermark is embedded directly into the image pixels and is not a CSS overlay that can be removed in the browser."
               />
             </CardBody>
           </Card>

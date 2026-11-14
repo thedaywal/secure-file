@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Smartphone,
   Tablet,
+  Trash2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -77,11 +78,14 @@ const TRUST_OPTIONS = [
   })),
 ]
 
-type PendingAction = { kind: 'trust'; device: Device; trust: TrustStatus }
+type PendingAction =
+  | { kind: 'trust'; device: Device; trust: TrustStatus }
+  | { kind: 'delete'; device: Device }
 
 interface DeviceHandlers {
   onOpen: () => void
   onTrust: (trust: TrustStatus) => void
+  onDelete: () => void
 }
 
 function buildDeviceActions(device: Device, handlers: DeviceHandlers): DropdownItem[] {
@@ -133,7 +137,16 @@ function IdentifierCell({ value }: { value: string }) {
 }
 
 const ROW_ACTION_WRAP = (device: Device, handlers: DeviceHandlers) => (
-  <div onClick={(event) => event.stopPropagation()}>
+  <div className="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
+    <IconButton
+      label={`Delete device record for ${device.label}`}
+      size="sm"
+      variant="ghost"
+      className="text-danger-600 hover:bg-danger-50"
+      onClick={handlers.onDelete}
+    >
+      <Trash2 size={15} />
+    </IconButton>
     <Dropdown
       trigger={({ toggle }) => (
         <IconButton label={`Actions for ${device.label}`} size="sm" onClick={toggle}>
@@ -271,15 +284,32 @@ export default function DevicesPage() {
     }
   }
 
+  const handleDeleteDevice = async (device: Device) => {
+    try {
+      await devicesService.remove(device.id)
+      toast.success('Device record deleted', 'Recipient links and sessions were revoked.')
+      if (devices.length === 1 && page > 1) {
+        setPage(page - 1)
+        await counts.reload()
+      } else {
+        await reloadAll()
+      }
+    } catch (failure) {
+      toast.error('Could not delete device record', toApiError(failure).message)
+    }
+  }
+
   const handlersFor = (device: Device): DeviceHandlers => ({
     onOpen: () => {
       setShowHistory(false)
       setDetail(device)
     },
     onTrust: (trust) => setPending({ kind: 'trust', device, trust }),
+    onDelete: () => setPending({ kind: 'delete', device }),
   })
 
   const trustAction = pending?.kind === 'trust' ? pending : null
+  const deleteAction = pending?.kind === 'delete' ? pending : null
 
   return (
     <div className="space-y-5">
@@ -581,6 +611,18 @@ export default function DevicesPage() {
         }
         confirmLabel={trustAction?.trust === 'trusted' ? 'Mark expected' : 'Flag suspicious'}
         tone={trustAction?.trust === 'suspicious' ? 'danger' : 'primary'}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteAction)}
+        onClose={() => setPending(null)}
+        onConfirm={async () => {
+          if (deleteAction) await handleDeleteDevice(deleteAction.device)
+        }}
+        title="Delete device record?"
+        description={`Delete the registry entry for “${deleteAction?.device.label ?? 'this device'}”? This revokes every link and live viewing session for “${deleteAction?.device.ownerUsername ?? 'the recipient'}” — including links they have not opened yet — and deletes the access-monitoring events recorded for this device.`}
+        confirmLabel="Delete device record"
+        tone="danger"
       />
     </div>
   )

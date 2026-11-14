@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from monitoring.models import AccessLog, Device
+from monitoring.models import AccessLog, BlockedIP, Device
 
 
 class AccessLogSerializer(serializers.Serializer):
@@ -51,3 +51,16 @@ class DeviceSerializer(serializers.Serializer):
 
 class DeviceTrustUpdateSerializer(serializers.Serializer):
     trust_status = serializers.ChoiceField(choices=['trusted', 'untrusted', 'suspicious'])
+
+
+class BlockedIPSerializer(serializers.Serializer):
+    id = serializers.CharField(read_only=True)
+    address = serializers.CharField(read_only=True)
+    reason = serializers.CharField(read_only=True)
+    source = serializers.CharField(read_only=True)
+    blockedAt = serializers.DateTimeField(source='blocked_at', read_only=True)
+
+
+class BlockedIPCreateSerializer(serializers.Serializer):
+    address = serializers.CharField(max_length=45)
+    reason = serializers.CharField(max_length=200, required=False, allow_blank=True, default='')

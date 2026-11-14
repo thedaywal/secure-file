@@ -51,6 +51,48 @@ class AccessEventType(models.TextChoices):
     UNAUTHORIZED_DEVICE = 'unauthorized-device', 'Unauthorized device'
     FORWARDED_LINK = 'forwarded-link', 'Forwarded link'
     DOWNLOAD_BLOCKED = 'download-blocked', 'Download blocked'
+    IP_BLOCKED = 'ip-blocked', 'Blocked address'
+    MOBILE_ONLY_BLOCKED = 'mobile-only-blocked', 'Non-mobile device blocked'
+    LINK_LOCKED = 'link-locked', 'Link locked'
+    ADMIN_LOGIN_FAILED = 'admin-login-failed', 'Administrator sign-in failed'
+
+
+class BlockedIPSource(models.TextChoices):
+    MANUAL = 'manual', 'Manual'
+    AUTO = 'auto', 'Automatic'
+
+
+class BlockedIP(models.Model):
+    """A block on a client address, added by the administrator or automatically.
+
+    Only the public address is ever stored, and the block is enforced on the
+    public viewer endpoints before any link state is revealed. Blocking is a
+    deterrent layer on top of the single-use link — it never becomes an
+    authentication factor.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    address = models.CharField(max_length=45, unique=True)
+    reason = models.CharField(max_length=200, blank=True)
+    source = models.CharField(max_length=8, choices=BlockedIPSource.choices, default=BlockedIPSource.MANUAL)
+    blocked_at = models.DateTimeField(default=timezone.now)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ('-blocked_at',)
+        verbose_name = 'blocked IP address'
+        verbose_name_plural = 'blocked IP addresses'
+
+    def __str__(self) -> str:
+        return self.address
+
+
+def is_blocked(address: str) -> bool:
+    """True when the given address (or host part of it) is on the blocklist."""
+    if not address:
+        return False
+    candidate = address.strip()
+    return BlockedIP.objects.filter(address=candidate).exists()
 
 
 class Device(models.Model):

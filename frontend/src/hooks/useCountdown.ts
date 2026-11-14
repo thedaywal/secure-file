@@ -14,18 +14,18 @@ export function useCountdown(seconds: number | null, onExpire?: () => void) {
     if (seconds === null) return
 
     const interval = window.setInterval(() => {
-      setRemaining((current) => {
-        if (current <= 1) {
-          window.clearInterval(interval)
-          onExpireRef.current?.()
-          return 0
-        }
-        return current - 1
-      })
+      setRemaining((current) => (current <= 1 ? 0 : current - 1))
     }, 1000)
 
     return () => window.clearInterval(interval)
   }, [seconds])
+
+  // Fire the expiry callback from an effect, never from inside the state updater:
+  // an updater may run twice (React StrictMode) and must stay side-effect free.
+  useEffect(() => {
+    if (seconds === null || remaining > 0) return
+    onExpireRef.current?.()
+  }, [remaining, seconds])
 
   return remaining
 }

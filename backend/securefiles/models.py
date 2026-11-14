@@ -75,6 +75,41 @@ class SecureFile(models.Model):
         return self.protection_status
 
 
+class Album(models.Model):
+    """A named collection of separately encrypted images shared as one unit."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(AdminUser, related_name='albums', on_delete=models.CASCADE)
+    name = models.CharField(max_length=255)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('-created_at',)
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class AlbumImage(models.Model):
+    """Ordered membership; each protected image belongs to at most one album."""
+
+    album = models.ForeignKey(Album, related_name='images', on_delete=models.CASCADE)
+    file = models.OneToOneField(
+        SecureFile, related_name='album_membership', on_delete=models.CASCADE
+    )
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ('position', 'file__uploaded_at')
+        constraints = [
+            models.UniqueConstraint(fields=['album', 'position'], name='unique_album_image_position'),
+        ]
+
+    def __str__(self) -> str:
+        return f'{self.album.name} · {self.file.name}'
+
+
 class FilePolicy(models.Model):
     """Protection policy for one image.
 

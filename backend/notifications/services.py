@@ -23,6 +23,10 @@ _ACCESS_EVENT_SPECS: dict[str, tuple[str, str, str]] = {
     'unauthorized-device': ('new-device', 'warning', 'Unrecognised device'),
     'forwarded-link': ('link-forwarded', 'critical', 'Possible link forwarding detected'),
     'download-blocked': ('unauthorized-access', 'warning', 'Download attempt blocked'),
+    'ip-blocked': ('unauthorized-access', 'critical', 'Blocked address attempted access'),
+    'link-locked': ('unauthorized-access', 'critical', 'Link locked after repeated failures'),
+    'admin-login-failed': ('unauthorized-access', 'warning', 'Administrator sign-in failed'),
+    'mobile-only-blocked': ('unauthorized-access', 'warning', 'Non-mobile device blocked'),
 }
 
 # AccessEventType value -> message template. Placeholders: {who} {file} {where} {ip}
@@ -36,6 +40,10 @@ _ACCESS_EVENT_MESSAGES: dict[str, str] = {
     'unauthorized-device': 'Access to “{file}” came from an unrecognised device{where}.',
     'forwarded-link': 'The link for “{file}” was opened with unknown credentials{where}{ip}.',
     'download-blocked': 'A download attempt on “{file}” was blocked{where}.',
+    'ip-blocked': 'An address on your blocklist tried to open “{file}”{where}{ip}.',
+    'link-locked': 'The link for “{file}” was locked after repeated failed sign-ins{where}{ip}.',
+    'admin-login-failed': 'A failed administrator sign-in attempt was recorded{where}{ip}.',
+    'mobile-only-blocked': '“{file}” was opened on a non-phone device{where} and blocked{ip}.',
 }
 
 

@@ -6,7 +6,6 @@ import {
   Card,
   CardBody,
   CardFooter,
-  CopyField,
   InfoList,
   InfoRow,
 } from '@/components/common'
@@ -122,7 +121,9 @@ export function LinkSummary({ context }: { context: ViewerLinkContext }) {
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <Badge tone="brand" size="sm">
-          {context.extension} image
+          {context.imageCount && context.imageCount > 1
+            ? `${context.imageCount} images`
+            : `${context.extension} image`}
         </Badge>
         <Badge tone="neutral" size="sm">
           Single-use link
@@ -164,13 +165,9 @@ export function SessionPanel({ session, remainingSeconds }: SessionPanelProps) {
       </div>
 
       <CardBody className="space-y-4">
-        <CopyField
-          label="Access ID"
-          value={session.accessId}
-          mono
-          hint="Quote this ID if you need to reference this access."
-        />
-
+        {session.imageCount && session.imageCount > 1 ? (
+          <p className="text-[12px] text-ink-muted">{session.imageCount} images in this album</p>
+        ) : null}
         <InfoList>
           <InfoRow label="Recipient" value={session.recipientUsername} mono />
           <InfoRow
@@ -193,11 +190,6 @@ export function SessionPanel({ session, remainingSeconds }: SessionPanelProps) {
           />
         </InfoList>
       </CardBody>
-
-      <CardFooter className="text-[11.5px] leading-4 text-ink-muted">
-        Downloads and printing are disabled for this delivery. Only one authorized session exists
-        for this link.
-      </CardFooter>
     </Card>
   )
 }

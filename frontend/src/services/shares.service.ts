@@ -1,5 +1,4 @@
-import { request, withMockFallback } from '@/services/api'
-import * as mock from '@/services/mock'
+import { loadMock, request, withMockFallback } from '@/services/api'
 import type { CreateShareInput } from '@/services/mock'
 import type {
   LinkState,
@@ -36,7 +35,7 @@ export const sharesService = {
             file_id: filters.fileId,
           },
         }),
-      () => mock.mockListShares(filters),
+      async () => (await loadMock()).mockListShares(filters),
     )
   },
 
@@ -44,7 +43,7 @@ export const sharesService = {
     return withMockFallback(
       () => request<ShareLink>({ url: `/shares/${id}/`, method: 'GET' }),
       async () => {
-        const page = await mock.mockListShares({ pageSize: 200 })
+        const page = await (await loadMock()).mockListShares({ pageSize: 200 })
         const share = page.results.find((item) => item.id === id)
         if (!share) throw { status: 404, code: 'not_found', message: 'Access link not found.' }
         return share
@@ -72,7 +71,26 @@ export const sharesService = {
             })),
           },
         }),
-      () => mock.mockCreateShares({ ...input, fileId }),
+      async () => (await loadMock()).mockCreateShares({ ...input, fileId }),
+    )
+  },
+
+  createForAlbum(albumId: string, input: CreateShareInput): Promise<ShareCreationResult> {
+    return withMockFallback(
+      () =>
+        request<ShareCreationResult>({
+          url: `/albums/${albumId}/share/`,
+          method: 'POST',
+          data: {
+            recipients: input.recipients.map((recipient) => ({
+              username: recipient.username,
+              password: recipient.password,
+              display_name: recipient.displayName,
+              permissions: recipient.permissions,
+            })),
+          },
+        }),
+      async () => (await loadMock()).mockCreateShares({ ...input, albumId }),
     )
   },
 
@@ -83,14 +101,14 @@ export const sharesService = {
   reissue(id: string): Promise<ShareLink> {
     return withMockFallback(
       () => request<ShareLink>({ url: `/shares/${id}/reissue/`, method: 'POST' }),
-      () => mock.mockReissueShare(id),
+      async () => (await loadMock()).mockReissueShare(id),
     )
   },
 
   revoke(id: string): Promise<ShareLink> {
     return withMockFallback(
       () => request<ShareLink>({ url: `/shares/${id}/revoke/`, method: 'POST' }),
-      () => mock.mockRevokeShare(id),
+      async () => (await loadMock()).mockRevokeShare(id),
     )
   },
 
@@ -101,7 +119,7 @@ export const sharesService = {
   removeRecipient(recipientId: string): Promise<void> {
     return withMockFallback(
       () => request<void>({ url: `/recipients/${recipientId}/`, method: 'DELETE' }),
-      () => mock.mockRemoveRecipient(recipientId),
+      async () => (await loadMock()).mockRemoveRecipient(recipientId),
     )
   },
 
@@ -117,7 +135,7 @@ export const sharesService = {
           method: 'PATCH',
           data: permissions,
         }),
-      () => mock.mockUpdateSharePermissions(id, permissions),
+      async () => (await loadMock()).mockUpdateSharePermissions(id, permissions),
     )
   },
 }

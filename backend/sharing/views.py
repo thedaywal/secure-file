@@ -14,7 +14,7 @@ from rest_framework.views import APIView
 
 from core.pagination import CamelCasePageNumberPagination
 from notifications.services import notify_access_revoked
-from securefiles.models import SecureFile, get_or_create_policy
+from securefiles.models import Album, SecureFile, get_or_create_policy
 from sharing.models import LinkState, Recipient, ShareLink
 from sharing.serializers import (
     CreateSharesInputSerializer,
@@ -33,7 +33,47 @@ ORDERING_MAP = {
 
 
 def _shares_for(user):
-    return ShareLink.objects.select_related('file', 'recipient').filter(file__owner=user)
+    return ShareLink.objects.select_related('file', 'recipient', 'album').filter(
+        Q(file__owner=user) | Q(album__owner=user)
+    ).prefetch_related('album__images')
+
+
+def _create_shares(secure_file, album, rows):
+    """Issue one single-use link per recipient for a file or an album."""
+    policy = get_or_create_policy(secure_file)
+    created_recipients: list[Recipient] = []
+    created_shares: list[ShareLink] = []
+    share_url = ''
+
+    with transaction.atomic():
+        for row in rows:
+            permissions = row.get('permissions') or {}
+            recipient = Recipient(
+                file=secure_file,
+                album=album,
+                username=row['username'],
+                display_name=row.get('display_name') or '',
+                session_duration_minutes=permissions.get('sessionDurationMinutes')
+                or policy.session_duration_minutes,
+                expires_at=permissions.get('expiresAt') or policy.link_expires_at,
+            )
+            recipient.set_password(row['password'])
+            recipient.save()
+
+            link, plaintext = issue_link(recipient, recipient.expires_at)
+            if not share_url:
+                from sharing.services import build_share_url
+
+                share_url = build_share_url(plaintext)
+
+            created_recipients.append(recipient)
+            created_shares.append(link)
+
+    return {
+        'shares': ShareLinkSerializer(created_shares, many=True).data,
+        'recipients': RecipientSerializer(created_recipients, many=True).data,
+        'shareUrl': share_url,
+    }
 
 
 def _filter_by_state(queryset, raw_state: str):
@@ -61,7 +101,10 @@ class ShareListView(APIView):
         file_id = (request.query_params.get('file_id') or '').strip()
         if file_id:
             try:
-                queryset = queryset.filter(file_id=uuid.UUID(file_id))
+                selected_file_id = uuid.UUID(file_id)
+                queryset = queryset.filter(
+                    Q(file_id=selected_file_id) | Q(album__images__file_id=selected_file_id)
+                ).distinct()
             except ValueError:
                 return Response({'count': 0, 'page': 1, 'pageSize': 20, 'totalPages': 1, 'results': []})
 
@@ -70,7 +113,9 @@ class ShareListView(APIView):
         search = (request.query_params.get('search') or '').strip()
         if search:
             queryset = queryset.filter(
-                Q(recipient__username__icontains=search) | Q(file__name__icontains=search)
+                Q(recipient__username__icontains=search)
+                | Q(file__name__icontains=search)
+                | Q(album__name__icontains=search)
             )
 
         ordering = ORDERING_MAP.get((request.query_params.get('ordering') or '').strip())
@@ -107,7 +152,9 @@ class CreateSharesView(APIView):
             )
 
         clashes = list(
-            Recipient.objects.filter(file=secure_file, username__in=usernames).values_list(
+            Recipient.objects.filter(
+                file=secure_file, album__isnull=True, username__in=usernames
+            ).values_list(
                 'username', flat=True
             )
         )
@@ -122,40 +169,51 @@ class CreateSharesView(APIView):
                 }
             )
 
-        policy = get_or_create_policy(secure_file)
-        created_recipients: list[Recipient] = []
-        created_shares: list[ShareLink] = []
-        share_url = ''
+        return Response(
+            _create_shares(secure_file, album=None, rows=rows),
+            status=status.HTTP_201_CREATED,
+        )
 
-        with transaction.atomic():
-            for row in rows:
-                permissions = row.get('permissions') or {}
-                recipient = Recipient(
-                    file=secure_file,
-                    username=row['username'],
-                    display_name=row.get('display_name') or '',
-                    session_duration_minutes=permissions.get('sessionDurationMinutes')
-                    or policy.session_duration_minutes,
-                    expires_at=permissions.get('expiresAt') or policy.link_expires_at,
-                )
-                recipient.set_password(row['password'])
-                recipient.save()
 
-                link, plaintext = issue_link(recipient, recipient.expires_at)
-                if not share_url:
-                    from sharing.services import build_share_url
+class CreateAlbumSharesView(APIView):
+    """POST /api/albums/{album_id}/share/ — issue recipient-scoped album links."""
 
-                    share_url = build_share_url(plaintext)
+    def post(self, request, album_id):
+        album = get_object_or_404(
+            Album.objects.filter(owner=request.user).prefetch_related('images__file'),
+            pk=album_id,
+        )
+        first_image = next(iter(album.images.all()), None)
+        if first_image is None:
+            raise ValidationError({'album': ['An empty album cannot be shared.']})
 
-                created_recipients.append(recipient)
-                created_shares.append(link)
+        serializer = CreateSharesInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        rows = serializer.validated_data['recipients']
+        usernames = [row['username'] for row in rows]
+        if len(set(usernames)) != len(usernames):
+            raise ValidationError(
+                {'recipients': ['Each recipient in the request must have a unique username.']}
+            )
+
+        clashes = list(
+            Recipient.objects.filter(album=album, username__in=usernames).values_list(
+                'username', flat=True
+            )
+        )
+        if clashes:
+            raise ValidationError(
+                {
+                    'recipients': [
+                        'These usernames already have access to this album: '
+                        + ', '.join(sorted(clashes))
+                        + '.'
+                    ]
+                }
+            )
 
         return Response(
-            {
-                'shares': ShareLinkSerializer(created_shares, many=True).data,
-                'recipients': RecipientSerializer(created_recipients, many=True).data,
-                'shareUrl': share_url,
-            },
+            _create_shares(first_image.file, album=album, rows=rows),
             status=status.HTTP_201_CREATED,
         )
 

@@ -80,8 +80,6 @@ export function buildPolicySummary(policy: FilePolicy): PolicySummarySection[] {
       title: 'Watermark configuration',
       rows: [
         { label: 'Recipient username', status: toggle(watermark.recipientUsername) },
-        { label: 'Access timestamp', status: toggle(watermark.accessTimestamp) },
-        { label: 'SecureFile reference', status: toggle(watermark.secureFileReference) },
         { label: 'Pattern', status: value(WATERMARK_PATTERN_LABEL[watermark.pattern]) },
         { label: 'Opacity', status: value(`${Math.round(watermark.opacity * 100)}%`) },
         { label: 'Size', status: value(`${watermark.size.toFixed(2)}×`) },
@@ -92,11 +90,7 @@ export function buildPolicySummary(policy: FilePolicy): PolicySummarySection[] {
 
 /** Representative watermark lines used by the configuration preview. */
 export function watermarkPreviewLines(config: WatermarkConfig): string[] {
-  const lines: string[] = []
-  if (config.recipientUsername) lines.push('amara.okafor')
-  if (config.accessTimestamp) lines.push('09 NOV 2026 - 10:30')
-  if (config.secureFileReference) lines.push('SecureFile · SF-AC-4821-7710')
-  return lines.length > 0 ? lines : ['SecureFile']
+  return config.recipientUsername ? ['amara.okafor'] : ['SecureFile']
 }
 
 function ToggleItem({ children }: { children: ReactNode }) {
@@ -314,7 +308,7 @@ export function PolicyEditor({ policy, onChange, errors = {} }: PolicyEditorProp
         <CardHeader
           icon={<Stamp size={16} />}
           title="Watermark configuration"
-          description="The recipient username and server access timestamp are always embedded, repeated diagonally across the entire image."
+          description="The recipient username is always embedded, repeated diagonally across the entire image in bold black ink."
         />
         <CardBody>
           <div className="grid gap-6 lg:grid-cols-2">
@@ -326,22 +320,6 @@ export function PolicyEditor({ policy, onChange, errors = {} }: PolicyEditorProp
                     checked
                     locked
                     onCheckedChange={() => undefined}
-                  />
-                </ToggleItem>
-                <ToggleItem>
-                  <Switch
-                    label="Access timestamp (server-generated)"
-                    checked
-                    locked
-                    onCheckedChange={() => undefined}
-                  />
-                </ToggleItem>
-                <ToggleItem>
-                  <Switch
-                    label="SecureFile reference"
-                    description="Append a short access reference to each watermark repetition."
-                    checked={watermark.secureFileReference}
-                    onCheckedChange={(checked) => updateWatermark({ secureFileReference: checked })}
                   />
                 </ToggleItem>
               </ToggleList>
@@ -356,12 +334,12 @@ export function PolicyEditor({ policy, onChange, errors = {} }: PolicyEditorProp
               <Slider
                 label="Opacity"
                 min={0.05}
-                max={0.5}
+                max={0.9}
                 step={0.01}
                 value={watermark.opacity}
                 onChange={(next) => updateWatermark({ opacity: next })}
                 formatValue={(next) => `${Math.round(next * 100)}%`}
-                hint="Semi-transparent but readable. The backend clamps this to 5%–50%."
+                hint="Controls how strongly the black watermark is embedded. Choose 5%–90%."
                 id="watermark-opacity"
               />
 

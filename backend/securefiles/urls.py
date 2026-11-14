@@ -1,6 +1,7 @@
 from django.urls import path
 
 from securefiles.views import (
+    AlbumUploadView,
     FileDetailView,
     FileExportView,
     FileListView,
@@ -9,6 +10,7 @@ from securefiles.views import (
 )
 
 urlpatterns = [
+    path('albums/upload/', AlbumUploadView.as_view(), name='album-upload'),
     path('files/', FileListView.as_view(), name='file-list'),
     path('files/export/', FileExportView.as_view(), name='file-export'),
     path('files/upload/', FileUploadView.as_view(), name='file-upload'),

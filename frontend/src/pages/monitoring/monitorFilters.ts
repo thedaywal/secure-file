@@ -1,5 +1,5 @@
 import type { SegmentedOption } from '@/components/common/SegmentedControl'
-import type { AccessLog, AccessLogFilters } from '@/types'
+import type { AccessLog, AccessLogFilters, RecipientSummary } from '@/types'
 
 /**
  * The seven monitored security signals plus an "all events" passthrough.
@@ -107,4 +107,44 @@ export function summarizeAccess(logs: AccessLog[], total?: number): AccessSummar
     failed: logs.filter((log) => log.result === 'failed' || log.result === 'blocked').length,
     highRisk: logs.filter((log) => log.riskLevel === 'high' || log.riskLevel === 'critical').length,
   }
+}
+
+/** Newest first, so the most recent event of each kind becomes the line shown. */
+function byOccurredAtDesc(a: AccessLog, b: AccessLog): number {
+  return new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()
+}
+
+/**
+ * Collapses a page of audit rows into at most two lines per recipient:
+ *  - `opened` — the successful open (the link was consumed and delivered);
+ *  - `reuse` — the most recent failed/blocked attempt, i.e. a link reuse.
+ *
+ * Recipients are ordered by their most recent activity. A side stays null when
+ * no matching event was recorded, so a recipient who never had a reuse shows a
+ * single line rather than a fabricated one.
+ */
+export function summarizeByRecipient(logs: AccessLog[]): RecipientSummary[] {
+  const groups = new Map<string, AccessLog[]>()
+  for (const log of logs) {
+    const key = log.recipientUsername || 'Unknown recipient'
+    const bucket = groups.get(key)
+    if (bucket) bucket.push(log)
+    else groups.set(key, [log])
+  }
+
+  const summaries: RecipientSummary[] = []
+  for (const [recipientUsername, bucket] of groups) {
+    const sorted = [...bucket].sort(byOccurredAtDesc)
+    summaries.push({
+      recipientUsername,
+      opened: sorted.find((log) => log.result === 'success') ?? null,
+      reuse: sorted.find((log) => log.result !== 'success') ?? null,
+    })
+  }
+
+  return summaries.sort((a, b) => {
+    const aTime = new Date((a.opened ?? a.reuse)?.occurredAt ?? 0).getTime()
+    const bTime = new Date((b.opened ?? b.reuse)?.occurredAt ?? 0).getTime()
+    return bTime - aTime
+  })
 }

@@ -218,12 +218,18 @@ ORIGINAL_ENCRYPTION_KEY = _encryption_key()
 
 # Every watermark is mandatory; these bound the administrator's tuning.
 WATERMARK_MIN_OPACITY = 0.05
-WATERMARK_MAX_OPACITY = 0.5
+WATERMARK_MAX_OPACITY = 0.9
 WATERMARK_MIN_SIZE = 0.5
 WATERMARK_MAX_SIZE = 2.0
 
 DEFAULT_SESSION_DURATION_MINUTES = 30
 MAX_SESSION_DURATION_MINUTES = 240
+
+# A viewing session is abandoned when no heartbeat arrives within this window.
+# The viewer heartbeats every 60s while the recipient is actually looking at the
+# image, so this generous window never punishes active viewing — it only catches
+# a session whose close beacon was lost (a mobile OS killing a backgrounded tab).
+SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get('SESSION_IDLE_TIMEOUT_SECONDS', '180'))
 
 ALLOWED_IMAGE_EXTENSIONS = ('JPG', 'JPEG', 'PNG', 'WEBP')
 ALLOWED_IMAGE_MIME_TYPES = {
@@ -232,6 +238,8 @@ ALLOWED_IMAGE_MIME_TYPES = {
     'image/webp': ('WEBP',),
 }
 MAX_IMAGE_BYTES = int(os.environ.get('MAX_IMAGE_BYTES', str(25 * 1024 * 1024)))
+MAX_ALBUM_IMAGE_COUNT = 20
+MAX_ALBUM_TOTAL_BYTES = 100 * 1024 * 1024
 
 # --------------------------------------------------------------------------- #
 # HTTPS — Caddy terminates TLS and forwards to Waitress
@@ -250,6 +258,26 @@ if SECUREFILE_HTTPS:
     SECURE_HSTS_SECONDS = 60 * 60 * 24 * 365
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
+
+# Capability URLs appear in the page, so they must never leak to a third party
+# through the Referer header. This does not depend on HTTPS and is always safe.
+SECURE_REFERRER_POLICY = 'no-referrer'
+
+# --------------------------------------------------------------------------- #
+# Abuse controls — automatic blocking
+# --------------------------------------------------------------------------- #
+# An address that accumulates this many failed or blocked audit events inside the
+# window is added to the blocklist automatically. The count is read straight from
+# the audit trail, so every block is backed by recorded evidence rather than a
+# separate counter that could drift from it.
+AUTO_BLOCK_THRESHOLD = int(os.environ.get('AUTO_BLOCK_THRESHOLD', '5'))
+AUTO_BLOCK_WINDOW_SECONDS = int(os.environ.get('AUTO_BLOCK_WINDOW_SECONDS', '900'))
+
+# A single-use link is locked after this many failed sign-in attempts, so a link
+# that leaks cannot be attacked indefinitely. The owner is alerted and can reissue
+# it. Counting is lifetime-per-link on purpose: a rolling window would let an
+# attacker pace their guesses to stay underneath it.
+LINK_MAX_FAILED_ATTEMPTS = int(os.environ.get('LINK_MAX_FAILED_ATTEMPTS', '10'))
 
 # --------------------------------------------------------------------------- #
 # I18N / static

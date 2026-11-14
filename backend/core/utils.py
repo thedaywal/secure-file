@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
 import secrets
 from datetime import datetime
@@ -36,11 +37,78 @@ def iso(value: datetime) -> str | None:
 # --------------------------------------------------------------------------- #
 # Request metadata — audit evidence, never an authentication factor
 # --------------------------------------------------------------------------- #
+def _normalise_ip(value: str) -> str:
+    """Strips a port/brackets so `1.2.3.4:5678` and `[::1]:80` compare cleanly."""
+    candidate = (value or '').strip().strip('"')
+    if not candidate:
+        return ''
+    if candidate.startswith('['):  # [::1]:443
+        candidate = candidate[1:].split(']', 1)[0]
+    elif candidate.count(':') == 1 and '.' in candidate:  # 1.2.3.4:443
+        candidate = candidate.split(':', 1)[0]
+    return candidate
+
+
+def is_public_ip(value: str) -> bool:
+    """True when the address is routable on the public internet."""
+    try:
+        address = ipaddress.ip_address(_normalise_ip(value))
+    except ValueError:
+        return False
+    return not (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    )
+
+
 def client_ip(request) -> str:
-    forwarded = request.META.get('HTTP_X_FORWARDED_FOR', '')
-    if forwarded:
-        return forwarded.split(',')[0].strip()
-    return request.META.get('REMOTE_ADDR', '') or '0.0.0.0'
+    """The recipient's real (public) address, for the audit trail.
+
+    Behind the reverse proxy every hop appends to `X-Forwarded-For`, and the
+    WSGI peer is the proxy itself, so the raw header can carry private or
+    loopback addresses. The first *public* address in the chain is the actual
+    client; only when no public address exists do we fall back to the first
+    observed value so the audit trail still records something.
+    """
+    candidates: list[str] = []
+    for header in ('HTTP_CF_CONNECTING_IP', 'HTTP_X_REAL_IP', 'HTTP_X_FORWARDED_FOR'):
+        raw = request.META.get(header, '')
+        if raw:
+            candidates.extend(_normalise_ip(part) for part in raw.split(','))
+    candidates.append(_normalise_ip(request.META.get('REMOTE_ADDR', '')))
+
+    for candidate in candidates:
+        if candidate and is_public_ip(candidate):
+            return candidate
+    for candidate in candidates:
+        if candidate:
+            return candidate
+    return '0.0.0.0'
+
+
+_PHONE_PATTERNS = (r'iphone', r'ipod', r'windows phone', r'blackberry')
+
+
+def is_phone(user_agent: str) -> bool:
+    """Best-effort: is this request coming from a mobile *phone*?
+
+    Tablets are deliberately excluded. That includes the modern iPadOS case,
+    where Safari reports a desktop `Macintosh` user agent rather than `iPad`.
+    A user agent is trivially spoofable, so this is a policy gate for recipient
+    links — a deterrent layered over the single-use link — never an
+    authentication factor.
+    """
+    ua = (user_agent or '').lower()
+    if not ua:
+        return False
+    if any(re.search(pattern, ua) for pattern in _PHONE_PATTERNS):
+        return True
+    # Android phones always advertise "Mobile"; Android tablets omit it.
+    return 'android' in ua and 'mobile' in ua
 
 
 _OS_PATTERNS = (
@@ -99,18 +167,3 @@ def parse_user_agent(user_agent: str) -> dict[str, str]:
         'label': label,
         'device_identifier': identifier,
     }
-
-
-# --------------------------------------------------------------------------- #
-# Watermark stamp — must match the documented format, e.g.
-# `john_2026 | 09 NOV 2026 - 10:30`
-# --------------------------------------------------------------------------- #
-_MONTHS = ('JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC')
-
-
-def watermark_stamp(username: str, moment: datetime) -> str:
-    local = moment.astimezone()
-    return (
-        f'{username} | {local.day:02d} {_MONTHS[local.month - 1]} {local.year} '
-        f'- {local.hour:02d}:{local.minute:02d}'
-    )

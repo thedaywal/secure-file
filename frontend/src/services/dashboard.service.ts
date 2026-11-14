@@ -1,5 +1,4 @@
-import { request, withMockFallback } from '@/services/api'
-import * as mock from '@/services/mock'
+import { loadMock, request, withMockFallback } from '@/services/api'
 import type { DashboardSummary } from '@/types'
 
 /**
@@ -10,7 +9,7 @@ export const dashboardService = {
   summary(): Promise<DashboardSummary> {
     return withMockFallback(
       () => request<DashboardSummary>({ url: '/dashboard/summary/', method: 'GET' }),
-      () => mock.mockGetDashboard(),
+      async () => (await loadMock()).mockGetDashboard(),
     )
   },
 }

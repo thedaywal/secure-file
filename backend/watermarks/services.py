@@ -5,15 +5,11 @@ import uuid
 
 from django.utils import timezone
 
-from core.utils import make_access_id, sha256_hex, watermark_stamp
+from core.utils import make_access_id, sha256_hex
 from securefiles.storage import read_original
 from watermarks.generator import build_watermark_lines, render_watermarked
 from watermarks.models import WatermarkRecord
 from watermarks.storage import store_rendition
-
-
-def file_label(file) -> str:
-    return f'{file.name}.{file.extension.lower()}'
 
 
 def create_rendition(
@@ -36,13 +32,7 @@ def create_rendition(
     access_id = access_id or make_access_id()
 
     original = read_original(file.original_path)
-    stamp = watermark_stamp(recipient_username, moment)
-    lines = build_watermark_lines(
-        stamp=stamp,
-        access_id=access_id,
-        file_label=file_label(file),
-        securefile_reference=securefile_reference,
-    )
+    lines = build_watermark_lines(username=recipient_username)
     rendered = render_watermarked(original, lines, opacity=opacity, size=size)
 
     record_id = uuid.uuid4()

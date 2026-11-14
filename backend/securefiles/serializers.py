@@ -9,7 +9,7 @@ from __future__ import annotations
 from django.conf import settings
 from rest_framework import serializers
 
-from securefiles.models import FilePolicy, ProtectionStatus, SecureFile
+from securefiles.models import Album, FilePolicy, ProtectionStatus, SecureFile
 
 LOCKED = True  # documents intent: these policy flags can never be disabled
 
@@ -52,6 +52,21 @@ class SecureFileSerializer(serializers.Serializer):
 
     def get_failedAttempts(self, obj: SecureFile) -> int:
         return sum(link.failed_attempts for link in obj.share_links.all())
+
+
+class AlbumSerializer(serializers.Serializer):
+    id = serializers.CharField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    imageCount = serializers.SerializerMethodField()
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    images = serializers.SerializerMethodField()
+
+    def get_imageCount(self, obj: Album) -> int:
+        return obj.images.count()
+
+    def get_images(self, obj: Album) -> list[dict]:
+        files = [membership.file for membership in obj.images.all()]
+        return SecureFileSerializer(files, many=True).data
 
 
 class FileUpdateSerializer(serializers.Serializer):

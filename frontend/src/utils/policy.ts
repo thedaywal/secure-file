@@ -72,8 +72,8 @@ export function validatePolicy(policy: FilePolicy): Record<string, string> {
     errors['access.expiresAt'] = 'Expiration date must be in the future.'
   }
 
-  if (policy.watermark.opacity < 0.05 || policy.watermark.opacity > 0.5) {
-    errors['watermark.opacity'] = 'Watermark opacity must be between 5% and 50%.'
+  if (policy.watermark.opacity < 0.05 || policy.watermark.opacity > 0.9) {
+    errors['watermark.opacity'] = 'Watermark opacity must be between 5% and 90%.'
   }
 
   if (!policy.viewing.permanentWatermark) {

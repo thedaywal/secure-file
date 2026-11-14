@@ -50,7 +50,7 @@ export function permissionChipLabels(permissions: RecipientPermissions): string[
  * recipient identity and its permission summary, so we project it into the
  * `Recipient` shape the UI uses.
  */
-export function recipientFromShare(share: ShareLink): Recipient {
+function recipientFromShare(share: ShareLink): Recipient {
   return {
     id: share.recipientId,
     username: share.recipientUsername,
@@ -61,6 +61,35 @@ export function recipientFromShare(share: ShareLink): Recipient {
     createdAt: share.createdAt,
     lastAuthenticatedAt: share.consumedAt ?? null,
   }
+}
+
+/** Display preference when a recipient owns more than one link. */
+const LINK_STATE_RANK: Record<LinkState, number> = {
+  ACTIVE: 4,
+  CONSUMED: 3,
+  EXPIRED: 2,
+  REVOKED: 1,
+}
+
+function isBetterShare(candidate: ShareLink, current: ShareLink): boolean {
+  const rank = LINK_STATE_RANK[candidate.state] - LINK_STATE_RANK[current.state]
+  if (rank !== 0) return rank > 0
+  return new Date(candidate.createdAt).getTime() > new Date(current.createdAt).getTime()
+}
+
+/**
+ * Project the shares endpoint into one line per recipient. Reissuing a link
+ * revokes the previous one and issues a replacement, so a recipient can own
+ * several links at once; only the most relevant (active, else newest) is kept so
+ * the table never grows a second, revoked row for the same person.
+ */
+export function recipientsFromShares(shares: ShareLink[]): Recipient[] {
+  const best = new Map<string, ShareLink>()
+  for (const share of shares) {
+    const current = best.get(share.recipientId)
+    if (!current || isBetterShare(share, current)) best.set(share.recipientId, share)
+  }
+  return [...best.values()].map(recipientFromShare)
 }
 
 function PermissionChips({ permissions }: { permissions: RecipientPermissions }) {

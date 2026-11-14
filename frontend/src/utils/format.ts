@@ -44,7 +44,9 @@ export function formatDateTime(input: string | number | Date | null | undefined)
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    // `hourCycle` rather than `hour12: false`: the latter resolves to h24 in some
+    // engines, which renders midnight as "24:00" instead of "00:00".
+    hourCycle: 'h23',
   }).format(date)
 }
 
@@ -55,7 +57,7 @@ export function formatTime(input: string | number | Date | null | undefined): st
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: false,
+    hourCycle: 'h23',
   }).format(date)
 }
 

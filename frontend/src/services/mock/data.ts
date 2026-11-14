@@ -95,26 +95,3 @@ export function makeAccessId(): string {
   const block = () => Math.floor(Math.random() * 9000) + 1000
   return `SF-AC-${block()}-${block()}`
 }
-
-const MONTHS = [
-  'JAN',
-  'FEB',
-  'MAR',
-  'APR',
-  'MAY',
-  'JUN',
-  'JUL',
-  'AUG',
-  'SEP',
-  'OCT',
-  'NOV',
-  'DEC',
-]
-
-/** Matches the approved watermark stamp format: 09 NOV 2026 - 10:30 */
-export function watermarkStampOf(date: Date): string {
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${pad(date.getDate())} ${MONTHS[date.getMonth()]} ${date.getFullYear()} - ${pad(
-    date.getHours(),
-  )}:${pad(date.getMinutes())}`
-}

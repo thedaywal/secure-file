@@ -130,9 +130,23 @@ export interface SecureFile {
   failedAttempts?: number
 }
 
+export interface Album {
+  id: ID
+  name: string
+  imageCount: number
+  createdAt: string
+  images: SecureFile[]
+}
+
 export interface FileUploadInput {
   file: File
   name?: string
+  tags?: string[]
+}
+
+export interface AlbumUploadInput {
+  files: File[]
+  name: string
   tags?: string[]
 }
 
@@ -240,6 +254,8 @@ export interface Recipient {
   displayName?: string
   fileId: ID
   fileName: string
+  albumId?: ID | null
+  imageCount?: number
   permissions: RecipientPermissions
   /** Mirrors the state of the recipient's current link. */
   status: LinkState
@@ -252,6 +268,8 @@ export interface ShareLink {
   id: ID
   fileId: ID
   fileName: string
+  albumId?: ID | null
+  imageCount?: number
   fileKind: FileKind
   recipientId: ID
   recipientUsername: string
@@ -291,6 +309,10 @@ export const ACCESS_EVENT_TYPES = [
   'unauthorized-device',
   'forwarded-link',
   'download-blocked',
+  'ip-blocked',
+  'mobile-only-blocked',
+  'link-locked',
+  'admin-login-failed',
 ] as const
 
 export type AccessEventType = (typeof ACCESS_EVENT_TYPES)[number]
@@ -316,6 +338,17 @@ export interface AccessLog {
   location?: string
 }
 
+/**
+ * A recipient collapsed to the two lines the access monitor shows: the
+ * successful open (link consumed) and any later blocked reuse. Either side is
+ * null when no such event was recorded.
+ */
+export interface RecipientSummary {
+  recipientUsername: string
+  opened: AccessLog | null
+  reuse: AccessLog | null
+}
+
 export interface AccessLogFilters extends PaginationParams {
   result?: AccessResult | 'all'
   eventType?: AccessEventType | 'all'
@@ -323,6 +356,23 @@ export interface AccessLogFilters extends PaginationParams {
   recipientUsername?: string
   dateFrom?: string
   dateTo?: string
+}
+
+/**
+ * A block on a client's *public* address. Enforced by the backend on the public
+ * viewer endpoints, on top of the single-use link — a deterrent, never an
+ * authentication factor. A block is either added by the administrator
+ * (`manual`) or applied automatically (`auto`) after repeated failures or an
+ * attempt to reuse a consumed link.
+ */
+export type BlockedIPSource = 'manual' | 'auto'
+
+export interface BlockedIP {
+  id: ID
+  address: string
+  reason?: string
+  source: BlockedIPSource
+  blockedAt: string
 }
 
 /* ------------------------------------------------------------------ *
@@ -487,6 +537,7 @@ export type ViewerState =
   | 'expired'
   | 'revoked'
   | 'session-ended'
+  | 'mobile-only'
   | 'invalid'
   | 'error'
 
@@ -495,6 +546,8 @@ export interface ViewerLinkContext {
   fileName: string
   fileKind: FileKind
   extension: FileExtension
+  albumId?: ID | null
+  imageCount?: number
   ownerName: string
   organization?: string
   /** Current link state as reported by the backend when the link is resolved. */
@@ -508,6 +561,9 @@ export interface ViewerSession {
   fileName: string
   fileKind: FileKind
   extension: FileExtension
+  albumId?: ID | null
+  imageCount?: number
+  images?: ViewerImage[]
   /** Short-lived, authenticated content URL issued after authorization. */
   contentUrl: string
   recipientUsername: string
@@ -518,6 +574,15 @@ export interface ViewerSession {
   expiresAt: string
   /** Seconds remaining in the viewing session. */
   remainingSeconds: number
+}
+
+export interface ViewerImage {
+  fileId: ID
+  fileName: string
+  fileKind: FileKind
+  extension: FileExtension
+  contentUrl: string
+  watermarkLines: string[]
 }
 
 export interface ViewerViewEvent {

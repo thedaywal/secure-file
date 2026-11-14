@@ -73,6 +73,26 @@ export const ACCESS_EVENT_META: Record<AccessEventType, Meta> = {
     tone: 'neutral',
     description: 'A download or print control was intercepted by the protected viewer.',
   },
+  'ip-blocked': {
+    label: 'Blocked address',
+    tone: 'danger',
+    description: 'A blocked network address tried to open the protected link.',
+  },
+  'mobile-only-blocked': {
+    label: 'Non-mobile device blocked',
+    tone: 'warning',
+    description: 'The protected link was opened on a non-phone device and blocked by policy.',
+  },
+  'link-locked': {
+    label: 'Link locked',
+    tone: 'danger',
+    description: 'The link was locked after too many failed sign-in attempts.',
+  },
+  'admin-login-failed': {
+    label: 'Admin sign-in failed',
+    tone: 'warning',
+    description: 'A failed administrator sign-in attempt was recorded.',
+  },
 }
 
 export const ACCESS_RESULT_META: Record<AccessResult, Meta> = {

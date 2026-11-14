@@ -3,25 +3,35 @@ import { useParams } from 'react-router-dom'
 import {
   Ban,
   Clock,
+  ChevronLeft,
+  ChevronRight,
   KeyRound,
   Link2Off,
   LockKeyhole,
   RefreshCw,
   ShieldCheck,
   ShieldX,
+  Smartphone,
   TriangleAlert,
 } from 'lucide-react'
 
 import { Alert, Button, Input, PasswordInput, Spinner, StatusDot } from '@/components/common'
-import { WatermarkedRendition } from '@/components/watermark/WatermarkPreview'
+import { DynamicWatermarkOverlay, WatermarkedRendition } from '@/components/watermark/WatermarkPreview'
 import { useCountdown, useDocumentTitle } from '@/hooks'
 import { toApiError } from '@/services/api'
 import { viewerService } from '@/services/viewer.service'
-import { formatDate, formatDateTime, formatDuration } from '@/utils/format'
-import type { ApiError, ViewerLinkContext, ViewerSession, ViewerState } from '@/types'
+import { formatDate, formatDuration } from '@/utils/format'
+import type { ApiError, ViewerImage, ViewerLinkContext, ViewerSession, ViewerState } from '@/types'
 import { LinkSummary, SessionPanel, StatePanel, ViewerCard } from '@/pages/viewer/viewerScreens'
 
 const HEARTBEAT_MS = 60_000
+
+/**
+ * Error code the backend returns (HTTP 403) when a protected link is opened on
+ * a non-phone device. Recipient links are phone-only, so this is a deliberate
+ * policy gate rather than a fault.
+ */
+const MOBILE_ONLY_CODE = 'mobile_only'
 
 /**
  * Public recipient viewer (route `/:token`).
@@ -43,6 +53,7 @@ export default function ProtectedFileViewerPage() {
   const [state, setState] = useState<ViewerState>(() => (hasToken ? 'validating' : 'invalid'))
   const [context, setContext] = useState<ViewerLinkContext | null>(null)
   const [session, setSession] = useState<ViewerSession | null>(null)
+  const [activeImageIndex, setActiveImageIndex] = useState(0)
   const [error, setError] = useState<ApiError | null>(() =>
     hasToken
       ? null
@@ -70,6 +81,7 @@ export default function ProtectedFileViewerPage() {
 
     try {
       const existing = await viewerService.currentSession(token)
+      setActiveImageIndex(0)
       setSession(existing)
       setState('authorized')
       return
@@ -99,6 +111,10 @@ export default function ProtectedFileViewerPage() {
       }
     } catch (failure) {
       const apiError = toApiError(failure)
+      if (apiError.code === MOBILE_ONLY_CODE) {
+        setState('mobile-only')
+        return
+      }
       setError(apiError)
       setState(apiError.status === 404 ? 'invalid' : 'error')
     }
@@ -126,6 +142,7 @@ export default function ProtectedFileViewerPage() {
       setSubmitting(true)
       try {
         const next = await viewerService.authenticate(token, username.trim(), password)
+        setActiveImageIndex(0)
         setSession(next)
         setState('authorized')
         void viewerService.recordEvent(next.sessionId, { event: 'opened' })
@@ -135,6 +152,8 @@ export default function ProtectedFileViewerPage() {
           /* Wrong credentials are NOT a link-state change — the link stays active. */
           setFormError(apiError)
           setPassword('')
+        } else if (apiError.code === MOBILE_ONLY_CODE) {
+          setState('mobile-only')
         } else if (apiError.status === 409 || apiError.code === 'link_consumed') {
           setState('consumed')
         } else if (apiError.status === 403 || /revoked/i.test(apiError.message)) {
@@ -178,6 +197,25 @@ export default function ProtectedFileViewerPage() {
     return () => window.clearInterval(timer)
   }, [state, sessionId])
 
+  /* Close the session the moment the recipient minimises the browser or leaves
+   * the page. `pagehide` covers tab close/backgrounding; `visibilitychange`
+   * catches the mobile app-switch case. The close call is idempotent, so the
+   * StrictMode double-invoke in development is harmless, and the backend's
+   * heartbeat backstop covers a beacon that never arrives. */
+  useEffect(() => {
+    if (state !== 'authorized' || !sessionId) return
+    const close = () => viewerService.closeSession(sessionId)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') close()
+    }
+    window.addEventListener('pagehide', close)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.removeEventListener('pagehide', close)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [sessionId, state])
+
   /* Record a `closed` event for the session when the viewer unmounts. */
   useEffect(() => {
     if (!sessionId) return
@@ -214,7 +252,7 @@ export default function ProtectedFileViewerPage() {
   }, [sessionId, state])
 
   const ownerHint = context?.ownerName
-    ? `Contact ${context.ownerName}, who shared this image, if you believe this is a mistake.`
+    ? `Contact ${context.ownerName}, who shared this content, if you believe this is a mistake.`
     : undefined
 
   /* ---------------------------------------------------------------- *
@@ -236,9 +274,9 @@ export default function ProtectedFileViewerPage() {
     return (
       <ViewerCard
         icon={<KeyRound size={17} />}
-        title="Sign in to view this image"
-        subtitle="Use the image-specific username and password you were given."
-        footer="Opening this link does not grant access. Credentials are valid for this image only."
+        title={context?.imageCount && context.imageCount > 1 ? 'Sign in to view this album' : 'Sign in to view this image'}
+        subtitle="Use the username and password you were given."
+        footer={`Opening this link does not grant access. Credentials are valid for this ${context?.imageCount && context.imageCount > 1 ? 'album' : 'image'} only.`}
       >
         {context ? <LinkSummary context={context} /> : null}
 
@@ -294,18 +332,25 @@ export default function ProtectedFileViewerPage() {
   }
 
   if (state === 'authorized' && session) {
+    const sessionImages: ViewerImage[] =
+      session.images?.length
+        ? session.images
+        : [
+            {
+              fileId: session.fileId,
+              fileName: session.fileName,
+              fileKind: session.fileKind,
+              extension: session.extension,
+              contentUrl: session.contentUrl,
+              watermarkLines: session.watermarkLines,
+            },
+          ]
+    const imageIndex = Math.min(activeImageIndex, sessionImages.length - 1)
+    const activeImage = sessionImages[imageIndex]
+
     return (
       <div className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:px-6 sm:py-8">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="truncate text-[15px] leading-6 font-semibold text-ink">
-              {session.fileName}
-            </h1>
-            <p className="mt-0.5 text-[12px] text-ink-muted">
-              Shared by {context?.ownerName ?? 'the file owner'} · Opened{' '}
-              {formatDateTime(session.startedAt)}
-            </p>
-          </div>
+        <div className="mb-4 flex justify-end">
           <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1 text-[11.5px] font-medium text-ink-soft">
             <StatusDot tone="success" pulse />
             Session active · {formatDuration(sessionRemaining)} left
@@ -314,31 +359,53 @@ export default function ProtectedFileViewerPage() {
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <div className="min-w-0 space-y-3">
-            <Alert tone="warning" title="This image is permanently watermarked for you">
-              The watermark is embedded directly into the image pixels and repeats across the whole
-              image, showing your username and the server access time. Screenshots, screen recording
-              and copying cannot be fully prevented — the watermark exists to deter and trace misuse.
-            </Alert>
-
+            {sessionImages.length > 1 ? (
+              <div className="flex items-center justify-between gap-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  leftIcon={<ChevronLeft size={15} />}
+                  disabled={imageIndex === 0}
+                  onClick={() => setActiveImageIndex((current) => Math.max(0, current - 1))}
+                >
+                  Previous
+                </Button>
+                <span className="text-[12px] font-medium text-ink-soft">
+                  Image {imageIndex + 1} of {sessionImages.length}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  rightIcon={<ChevronRight size={15} />}
+                  disabled={imageIndex >= sessionImages.length - 1}
+                  onClick={() =>
+                    setActiveImageIndex((current) => Math.min(sessionImages.length - 1, current + 1))
+                  }
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
             <WatermarkedRendition
-              src={session.contentUrl}
-              alt={session.fileName}
-              watermarkLines={session.watermarkLines}
-              caption="Backend-generated rendition. The watermark is embedded into the image bytes, not overlaid by the browser."
+              src={activeImage.contentUrl}
+              alt={activeImage.fileName}
+              watermarkLines={activeImage.watermarkLines}
+              showWatermarkLabels={false}
+              fitToViewport
+              overlay={
+                <DynamicWatermarkOverlay
+                  lines={
+                    activeImage.watermarkLines.length
+                      ? activeImage.watermarkLines
+                      : [session.recipientUsername]
+                  }
+                />
+              }
             />
-
-            <p className="text-[11.5px] leading-4 text-ink-muted">
-              Right-click, print and download are restricted here as deterrents only. They are not a
-              security boundary — the permanent watermark is.
-            </p>
           </div>
 
           <aside className="space-y-3">
             <SessionPanel session={session} remainingSeconds={sessionRemaining} />
-            <div className="rounded-xl border border-line bg-surface-subtle/60 p-3.5 text-[11.5px] leading-4 text-ink-muted">
-              Every view, blocked action and session event is recorded and visible to{' '}
-              {context?.ownerName ?? 'the file owner'}.
-            </div>
           </aside>
         </div>
       </div>
@@ -378,7 +445,7 @@ export default function ProtectedFileViewerPage() {
         icon={<Clock size={26} />}
         tone="warning"
         title="This link has expired"
-        description={`The share window for “${context?.fileName ?? 'this image'}” has closed, so access is no longer available.${
+        description={`The share window for “${context?.fileName ?? 'this content'}” has closed, so access is no longer available.${
           context?.expiresAt ? ` It expired on ${formatDate(context.expiresAt)}.` : ''
         }`}
         hint={ownerHint}
@@ -392,7 +459,7 @@ export default function ProtectedFileViewerPage() {
         icon={<Ban size={26} />}
         tone="danger"
         title="Access has been revoked"
-        description="The administrator has revoked access to this image."
+        description="The administrator has revoked access to this content."
         hint={ownerHint}
       />
     )
@@ -405,6 +472,18 @@ export default function ProtectedFileViewerPage() {
         tone="warning"
         title="This viewing session has ended"
         description="The session reached its time limit or was closed. The link was already consumed, so it cannot be reopened."
+        hint={ownerHint}
+      />
+    )
+  }
+
+  if (state === 'mobile-only') {
+    return (
+      <StatePanel
+        icon={<Smartphone size={26} />}
+        tone="warning"
+        title="Open this link on your phone"
+        description="Protected links are restricted to mobile phones. Open the link you were sent on a phone to continue — tablets and computers are not permitted."
         hint={ownerHint}
       />
     )

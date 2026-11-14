@@ -45,55 +45,59 @@ export function FileRowActions({ file, onRevoke, onDelete }: FileRowActionsProps
   const navigate = useNavigate()
 
   return (
-    <Dropdown
-      align="right"
-      trigger={({ toggle }) => (
-        <IconButton label="File actions" size="sm" onClick={toggle}>
-          <MoreVertical size={16} />
-        </IconButton>
-      )}
-      items={[
-        {
-          id: 'view',
-          label: 'View details',
-          icon: <Eye size={15} />,
-          onSelect: () => navigate(adminPath(`/files/${file.id}`)),
-        },
-        {
-          id: 'permissions',
-          label: 'Configure permissions',
-          icon: <SlidersHorizontal size={15} />,
-          onSelect: () => navigate(adminPath(`/files/${file.id}?tab=policies`)),
-        },
-        {
-          id: 'share',
-          label: 'Share file',
-          icon: <Share2 size={15} />,
-          onSelect: () => navigate(adminPath(`/files/${file.id}?tab=sharing`)),
-        },
-        {
-          id: 'activity',
-          label: 'View access history',
-          icon: <Radio size={15} />,
-          onSelect: () => navigate(adminPath(`/monitoring/files/${file.id}`)),
-        },
-        {
-          id: 'revoke',
-          label: 'Revoke access',
-          icon: <Ban size={15} />,
-          tone: 'danger',
-          separated: true,
-          onSelect: () => onRevoke(file),
-        },
-        {
-          id: 'delete',
-          label: 'Delete file',
-          icon: <Trash2 size={15} />,
-          tone: 'danger',
-          onSelect: () => onDelete(file),
-        },
-      ]}
-    />
+    <div className="flex items-center gap-1">
+      <IconButton
+        label={`Delete file ${file.name}`}
+        size="sm"
+        variant="ghost"
+        className="text-danger-600 hover:bg-danger-50"
+        onClick={() => onDelete(file)}
+      >
+        <Trash2 size={15} />
+      </IconButton>
+      <Dropdown
+        align="right"
+        trigger={({ toggle }) => (
+          <IconButton label="File actions" size="sm" onClick={toggle}>
+            <MoreVertical size={16} />
+          </IconButton>
+        )}
+        items={[
+          {
+            id: 'view',
+            label: 'View details',
+            icon: <Eye size={15} />,
+            onSelect: () => navigate(adminPath(`/files/${file.id}`)),
+          },
+          {
+            id: 'permissions',
+            label: 'Configure permissions',
+            icon: <SlidersHorizontal size={15} />,
+            onSelect: () => navigate(adminPath(`/files/${file.id}?tab=policies`)),
+          },
+          {
+            id: 'share',
+            label: 'Share file',
+            icon: <Share2 size={15} />,
+            onSelect: () => navigate(adminPath(`/files/${file.id}?tab=sharing`)),
+          },
+          {
+            id: 'activity',
+            label: 'View access history',
+            icon: <Radio size={15} />,
+            onSelect: () => navigate(adminPath(`/monitoring/files/${file.id}`)),
+          },
+          {
+            id: 'revoke',
+            label: 'Revoke access',
+            icon: <Ban size={15} />,
+            tone: 'danger',
+            separated: true,
+            onSelect: () => onRevoke(file),
+          },
+        ]}
+      />
+    </div>
   )
 }
 

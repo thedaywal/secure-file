@@ -1,5 +1,4 @@
-import { request, withMockFallback } from '@/services/api'
-import * as mock from '@/services/mock'
+import { loadMock, request, withMockFallback } from '@/services/api'
 import type { AuthSession, LoginPayload, User } from '@/types'
 
 /**
@@ -24,14 +23,14 @@ export const authService = {
             remember: payload.remember,
           },
         }),
-      () => mock.mockLogin(payload.email),
+      async () => (await loadMock()).mockLogin(payload.email),
     )
   },
 
   forgotPassword(email: string): Promise<void> {
     return withMockFallback(
       () => request<void>({ url: '/auth/forgot-password/', method: 'POST', data: { email } }),
-      () => mock.mockNoop(),
+      async () => (await loadMock()).mockNoop(),
     )
   },
 
@@ -43,20 +42,21 @@ export const authService = {
           method: 'POST',
           data: { token, password },
         }),
-      () => mock.mockNoop(),
+      async () => (await loadMock()).mockNoop(),
     )
   },
 
   logout(): Promise<void> {
     return withMockFallback(
       () => request<void>({ url: '/auth/logout/', method: 'POST' }),
-      () => mock.mockNoop(),
+      async () => (await loadMock()).mockNoop(),
     )
   },
 
   me(): Promise<User> {
-    return withMockFallback(() => request<User>({ url: '/auth/me/', method: 'GET' }), () =>
-      mock.mockCurrentUser(),
+    return withMockFallback(
+      () => request<User>({ url: '/auth/me/', method: 'GET' }),
+      async () => (await loadMock()).mockCurrentUser(),
     )
   },
 
@@ -64,7 +64,7 @@ export const authService = {
   updateProfile(patch: Partial<User>): Promise<User> {
     return withMockFallback(
       () => request<User>({ url: '/auth/me/', method: 'PATCH', data: patch }),
-      () => mock.mockUpdateProfile(patch),
+      async () => (await loadMock()).mockUpdateProfile(patch),
     )
   },
 
@@ -77,7 +77,7 @@ export const authService = {
           method: 'POST',
           data: { currentPassword, newPassword },
         }),
-      () => mock.mockChangePassword(),
+      async () => (await loadMock()).mockChangePassword(),
     )
   },
 
@@ -85,7 +85,7 @@ export const authService = {
   revokeAllSessions(): Promise<void> {
     return withMockFallback(
       () => request<void>({ url: '/auth/sessions/revoke-all/', method: 'POST' }),
-      () => mock.mockRevokeAllSessions(),
+      async () => (await loadMock()).mockRevokeAllSessions(),
     )
   },
 }

@@ -154,6 +154,15 @@ export async function request<T>(config: AxiosRequestConfig): Promise<T> {
  */
 const FALLBACK_STATUSES = new Set([0, 404, 405, 501, 502, 503, 504])
 
+/**
+ * Loads the mock adapters on demand. The dynamic import keeps the (large) mock
+ * bundle out of the production entry chunk and stops it being preloaded: with
+ * `VITE_ENABLE_MOCK_FALLBACK=false` it is never fetched at all.
+ */
+export function loadMock(): Promise<typeof import('@/services/mock')> {
+  return import('@/services/mock')
+}
+
 export function isMockFallbackEligible(error: unknown): boolean {
   if (!env.enableMockFallback) return false
   const apiError = toApiError(error)

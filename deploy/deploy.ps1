@@ -9,14 +9,14 @@
     deploy.
 
 .PARAMETER Root
-    Repository root on the server. Defaults to C:\securefile.
+    Repository root on the server. Defaults to C:\Users\Administrator\Documents\secure-file.
 
 .PARAMETER SkipPull
     Skip `git pull` (use when deploying a working copy that was copied in place).
 #>
 [CmdletBinding()]
 param(
-    [string]$Root = 'C:\securefile',
+    [string]$Root = 'C:\Users\Administrator\Documents\secure-file',
     [switch]$SkipPull
 )
 

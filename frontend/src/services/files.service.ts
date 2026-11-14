@@ -1,6 +1,7 @@
-import { request, withMockFallback } from '@/services/api'
-import * as mock from '@/services/mock'
+import { loadMock, request, withMockFallback } from '@/services/api'
 import type {
+  Album,
+  AlbumUploadInput,
   FilePolicy,
   FileUploadInput,
   Paginated,
@@ -29,14 +30,14 @@ export const filesService = {
             ordering: filters.ordering,
           },
         }),
-      () => mock.mockListFiles(filters),
+      async () => (await loadMock()).mockListFiles(filters),
     )
   },
 
   get(id: string): Promise<SecureFile> {
     return withMockFallback(
       () => request<SecureFile>({ url: `/files/${id}/`, method: 'GET' }),
-      () => mock.mockGetFile(id),
+      async () => (await loadMock()).mockGetFile(id),
     )
   },
 
@@ -54,28 +55,46 @@ export const filesService = {
           data: form,
           headers: { 'Content-Type': 'multipart/form-data' },
         }),
-      () => mock.mockUploadFile(input),
+      async () => (await loadMock()).mockUploadFile(input),
+    )
+  },
+
+  uploadAlbum(input: AlbumUploadInput): Promise<Album> {
+    const form = new FormData()
+    form.append('name', input.name)
+    input.files.forEach((file) => form.append('files', file))
+    ;(input.tags ?? []).forEach((tag) => form.append('tags', tag))
+
+    return withMockFallback(
+      () =>
+        request<Album>({
+          url: '/albums/upload/',
+          method: 'POST',
+          data: form,
+          headers: { 'Content-Type': 'multipart/form-data' },
+        }),
+      async () => (await loadMock()).mockUploadAlbum(input),
     )
   },
 
   update(id: string, patch: Partial<SecureFile>): Promise<SecureFile> {
     return withMockFallback(
       () => request<SecureFile>({ url: `/files/${id}/`, method: 'PATCH', data: patch }),
-      () => mock.mockUpdateFile(id, patch),
+      async () => (await loadMock()).mockUpdateFile(id, patch),
     )
   },
 
   remove(id: string): Promise<void> {
     return withMockFallback(
       () => request<void>({ url: `/files/${id}/`, method: 'DELETE' }),
-      () => mock.mockDeleteFile(id),
+      async () => (await loadMock()).mockDeleteFile(id),
     )
   },
 
   getPolicy(id: string): Promise<FilePolicy> {
     return withMockFallback(
       () => request<FilePolicy>({ url: `/files/${id}/policies/`, method: 'GET' }),
-      () => mock.mockGetPolicy(id),
+      async () => (await loadMock()).mockGetPolicy(id),
     )
   },
 
@@ -86,7 +105,7 @@ export const filesService = {
   updatePolicy(id: string, policy: FilePolicy): Promise<FilePolicy> {
     return withMockFallback(
       () => request<FilePolicy>({ url: `/files/${id}/policies/`, method: 'PATCH', data: policy }),
-      () => mock.mockUpdatePolicy(id, policy),
+      async () => (await loadMock()).mockUpdatePolicy(id, policy),
     )
   },
 
@@ -105,7 +124,7 @@ export const filesService = {
           },
           responseType: 'blob',
         }),
-      () => mock.mockExportFiles(filters),
+      async () => (await loadMock()).mockExportFiles(filters),
     )
   },
 }
